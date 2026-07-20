@@ -224,3 +224,7 @@ data/raw/*
 # Generated processed datasets
 data/processed/*
 !data/processed/.gitkeep
+
+# Generated search indexes
+data/index/*
+!data/index/.gitkeep
