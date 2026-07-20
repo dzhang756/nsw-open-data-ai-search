@@ -220,3 +220,7 @@ __marimo__/
 # Generated catalogue snapshots
 data/raw/*
 !data/raw/.gitkeep
+
+# Generated processed datasets
+data/processed/*
+!data/processed/.gitkeep
