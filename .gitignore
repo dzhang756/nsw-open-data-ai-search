@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated catalogue snapshots
+data/raw/*
+!data/raw/.gitkeep
