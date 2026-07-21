@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 from typing import Any
 
 from src.search_engine import (
@@ -11,6 +12,20 @@ from src.search_engine import (
 from src.search_filters import SearchFilters
 
 DEFAULT_CONFIG = SearchConfig()
+
+
+def parse_iso_date(value: str) -> date:
+    """Parse a command-line date in YYYY-MM-DD format."""
+
+    try:
+        return date.fromisoformat(
+            value.strip()
+        )
+
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "Date values must use YYYY-MM-DD format."
+        ) from error
 
 
 def shorten_text(
@@ -152,8 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="formats",
         help=(
             "Require a resource format such as CSV, "
-            "JSON or XLSX. Repeat this option to accept "
-            "multiple formats using OR logic."
+            "JSON or XLSX. Repeat to accept multiple "
+            "formats using OR logic."
         ),
     )
 
@@ -164,9 +179,38 @@ def build_parser() -> argparse.ArgumentParser:
         dest="organisations",
         help=(
             "Require an exact organisation name. "
-            "Matching is case-insensitive. Repeat this "
-            "option to accept multiple organisations "
-            "using OR logic."
+            "Matching is case-insensitive. Repeat to "
+            "accept multiple organisations using OR logic."
+        ),
+    )
+
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        dest="categories",
+        help=(
+            "Require an exact Data.NSW category name. "
+            "Matching is case-insensitive. Repeat to "
+            "accept multiple categories using OR logic."
+        ),
+    )
+
+    parser.add_argument(
+        "--modified-from",
+        type=parse_iso_date,
+        help=(
+            "Require metadata modified on or after this "
+            "date, using YYYY-MM-DD."
+        ),
+    )
+
+    parser.add_argument(
+        "--modified-to",
+        type=parse_iso_date,
+        help=(
+            "Require metadata modified on or before this "
+            "date, using YYYY-MM-DD."
         ),
     )
 
@@ -194,6 +238,7 @@ def print_response(
     print(
         f'Query: "{response.query}"'
     )
+
     print(
         "Weights: "
         f"semantic={config.semantic_weight:.2f}, "
@@ -242,6 +287,35 @@ def print_response(
     )
 
     print(
+        "Category filter: "
+        + (
+            ", ".join(
+                filters.categories
+            )
+            if filters.categories
+            else "None"
+        )
+    )
+
+    print(
+        "Modified from: "
+        + (
+            filters.modified_from.isoformat()
+            if filters.modified_from is not None
+            else "None"
+        )
+    )
+
+    print(
+        "Modified to: "
+        + (
+            filters.modified_to.isoformat()
+            if filters.modified_to is not None
+            else "None"
+        )
+    )
+
+    print(
         "Machine-readable only: "
         + (
             "Yes"
@@ -274,6 +348,7 @@ def print_response(
         f"Results returned: "
         f"{len(response.results)}"
     )
+
     print("=" * 80)
 
     if not response.results:
@@ -316,27 +391,33 @@ def print_response(
         print(
             f"{rank}. {result.title}"
         )
+
         print(
             f"   Hybrid score: "
             f"{result.hybrid_score:.6f}"
         )
+
         print(
             "   Semantic: "
             f"score={result.semantic_score:.4f}, "
             f"rank={result.semantic_rank}"
         )
+
         print(
             "   Keyword: "
             f"score={result.keyword_score:.4f}, "
             f"rank={keyword_rank}"
         )
+
         print(
             f"   Organisation: "
             f"{result.organisation}"
         )
+
         print(
             f"   Formats: {format_text}"
         )
+
         print(
             f"   Modified: {modified}"
         )
@@ -397,6 +478,15 @@ def main() -> None:
             ),
             organisations=tuple(
                 arguments.organisations
+            ),
+            categories=tuple(
+                arguments.categories
+            ),
+            modified_from=(
+                arguments.modified_from
+            ),
+            modified_to=(
+                arguments.modified_to
             ),
             machine_readable_only=(
                 arguments.machine_readable_only

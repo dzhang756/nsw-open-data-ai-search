@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 import numpy as np
@@ -17,6 +18,9 @@ class SearchFilters:
 
     formats: tuple[str, ...] = ()
     organisations: tuple[str, ...] = ()
+    categories: tuple[str, ...] = ()
+    modified_from: date | None = None
+    modified_to: date | None = None
     machine_readable_only: bool = False
 
     def validated(self) -> SearchFilters:
@@ -31,14 +35,12 @@ class SearchFilters:
                     "Every requested format must be a string."
                 )
 
-            normalised = normalise_format_value(
-                value
-            )
+            normalised = normalise_format_value(value)
 
-            if not normalised:
-                continue
-
-            if normalised in seen_formats:
+            if (
+                not normalised
+                or normalised in seen_formats
+            ):
                 continue
 
             seen_formats.add(normalised)
@@ -55,23 +57,90 @@ class SearchFilters:
                 )
 
             display_value = compact_text(value)
+
             normalised_value = (
                 normalise_organisation_value(
                     display_value
                 )
             )
 
-            if not normalised_value:
-                continue
-
-            if normalised_value in seen_organisations:
+            if (
+                not normalised_value
+                or normalised_value
+                in seen_organisations
+            ):
                 continue
 
             seen_organisations.add(
                 normalised_value
             )
+
             cleaned_organisations.append(
                 display_value
+            )
+
+        cleaned_categories: list[str] = []
+        seen_categories: set[str] = set()
+
+        for value in self.categories:
+            if not isinstance(value, str):
+                raise ValueError(
+                    "Every requested category must "
+                    "be a string."
+                )
+
+            display_value = compact_text(value)
+
+            normalised_value = (
+                normalise_category_value(
+                    display_value
+                )
+            )
+
+            if (
+                not normalised_value
+                or normalised_value in seen_categories
+            ):
+                continue
+
+            seen_categories.add(
+                normalised_value
+            )
+
+            cleaned_categories.append(
+                display_value
+            )
+
+        if (
+            self.modified_from is not None
+            and not isinstance(
+                self.modified_from,
+                date,
+            )
+        ):
+            raise ValueError(
+                "modified_from must be a date."
+            )
+
+        if (
+            self.modified_to is not None
+            and not isinstance(
+                self.modified_to,
+                date,
+            )
+        ):
+            raise ValueError(
+                "modified_to must be a date."
+            )
+
+        if (
+            self.modified_from is not None
+            and self.modified_to is not None
+            and self.modified_from > self.modified_to
+        ):
+            raise ValueError(
+                "modified_from cannot be later than "
+                "modified_to."
             )
 
         return SearchFilters(
@@ -79,6 +148,11 @@ class SearchFilters:
             organisations=tuple(
                 cleaned_organisations
             ),
+            categories=tuple(
+                cleaned_categories
+            ),
+            modified_from=self.modified_from,
+            modified_to=self.modified_to,
             machine_readable_only=(
                 self.machine_readable_only
             ),
@@ -91,6 +165,9 @@ class SearchFilters:
         return bool(
             self.formats
             or self.organisations
+            or self.categories
+            or self.modified_from is not None
+            or self.modified_to is not None
             or self.machine_readable_only
         )
 
@@ -178,6 +255,16 @@ def normalise_organisation_value(
     ).casefold()
 
 
+def normalise_category_value(
+    value: str,
+) -> str:
+    """Normalise a category name for exact matching."""
+
+    return compact_text(
+        value
+    ).casefold()
+
+
 def dataset_organisation_title(
     dataset: dict[str, Any],
 ) -> str:
@@ -205,6 +292,76 @@ def dataset_organisation_title(
         return ""
 
     return compact_text(value)
+
+
+def extract_named_values(
+    values: Any,
+) -> tuple[str, ...]:
+    """Extract unique names from strings or dictionaries."""
+
+    if not isinstance(values, list):
+        return ()
+
+    extracted: list[str] = []
+    seen_values: set[str] = set()
+
+    for value in values:
+        if isinstance(value, str):
+            display_value = compact_text(
+                value
+            )
+
+        elif isinstance(value, dict):
+            raw_value = (
+                value.get("title")
+                or value.get("display_name")
+                or value.get("name")
+            )
+
+            display_value = (
+                compact_text(raw_value)
+                if isinstance(raw_value, str)
+                else ""
+            )
+
+        else:
+            display_value = ""
+
+        normalised_value = (
+            display_value.casefold()
+        )
+
+        if (
+            not display_value
+            or normalised_value in seen_values
+        ):
+            continue
+
+        seen_values.add(
+            normalised_value
+        )
+
+        extracted.append(
+            display_value
+        )
+
+    return tuple(extracted)
+
+
+def dataset_category_values(
+    dataset: dict[str, Any],
+) -> set[str]:
+    """Return normalised Data.NSW category values."""
+
+    categories = extract_named_values(
+        dataset.get("groups")
+    )
+
+    return {
+        normalise_category_value(category)
+        for category in categories
+        if normalise_category_value(category)
+    }
 
 
 def dataset_format_values(
@@ -248,6 +405,45 @@ def dataset_is_machine_readable(
         )
         is True
     )
+
+
+def dataset_modified_date(
+    dataset: dict[str, Any],
+) -> date | None:
+    """Extract an ISO modification date from metadata."""
+
+    value = dataset.get(
+        "metadata_modified"
+    )
+
+    if not isinstance(value, str):
+        return None
+
+    compact_value = compact_text(value)
+
+    if not compact_value:
+        return None
+
+    try:
+        parsed_datetime = datetime.fromisoformat(
+            compact_value.replace(
+                "Z",
+                "+00:00",
+            )
+        )
+
+        return parsed_datetime.date()
+
+    except ValueError:
+        pass
+
+    try:
+        return date.fromisoformat(
+            compact_value[:10]
+        )
+
+    except ValueError:
+        return None
 
 
 def dataset_matches_filters(
@@ -295,6 +491,52 @@ def dataset_matches_filters(
         if (
             dataset_organisation
             not in requested_organisations
+        ):
+            return False
+
+    if filters.categories:
+        available_categories = (
+            dataset_category_values(
+                dataset
+            )
+        )
+
+        requested_categories = {
+            normalise_category_value(
+                category
+            )
+            for category in filters.categories
+        }
+
+        # Multiple categories use OR logic.
+        if not (
+            available_categories
+            & requested_categories
+        ):
+            return False
+
+    if (
+        filters.modified_from is not None
+        or filters.modified_to is not None
+    ):
+        modified_date = dataset_modified_date(
+            dataset
+        )
+
+        if modified_date is None:
+            return False
+
+        if (
+            filters.modified_from is not None
+            and modified_date
+            < filters.modified_from
+        ):
+            return False
+
+        if (
+            filters.modified_to is not None
+            and modified_date
+            > filters.modified_to
         ):
             return False
 
