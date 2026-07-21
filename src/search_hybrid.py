@@ -141,6 +141,19 @@ def print_response(response: SearchResponse) -> None:
         f"semantic={config.semantic_weight:.2f}, "
         f"keyword={config.keyword_weight:.2f}"
     )
+    
+    field_weights = (
+        config.keyword_field_weights
+    )
+
+    print(
+        "Keyword fields: "
+        f"title={field_weights.title:.2f}, "
+        f"subjects={field_weights.subjects:.2f}, "
+        f"description={field_weights.description:.2f}, "
+        f"resources={field_weights.resources:.2f}, "
+        f"organisation={field_weights.organisation:.2f}"
+    )
     print(
         "Diversification: "
         f"lambda={config.diversity_lambda:.2f}, "

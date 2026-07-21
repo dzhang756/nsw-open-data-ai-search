@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +24,23 @@ EMBEDDING_MANIFEST_PATH = Path(
     "data/index/embedding_manifest.json"
 )
 
-KEYWORD_MATRIX_PATH = Path(
-    "data/index/keyword_matrix.npz"
-)
+KEYWORD_FIELD_MATRIX_PATHS = {
+    "title": Path(
+        "data/index/keyword_title_matrix.npz"
+    ),
+    "subjects": Path(
+        "data/index/keyword_subjects_matrix.npz"
+    ),
+    "organisation": Path(
+        "data/index/keyword_organisation_matrix.npz"
+    ),
+    "resources": Path(
+        "data/index/keyword_resources_matrix.npz"
+    ),
+    "description": Path(
+        "data/index/keyword_description_matrix.npz"
+    ),
+}
 KEYWORD_VECTORIZER_PATH = Path(
     "data/index/keyword_vectorizer.joblib"
 )
@@ -37,6 +51,59 @@ KEYWORD_MANIFEST_PATH = Path(
     "data/index/keyword_manifest.json"
 )
 
+@dataclass(frozen=True)
+class KeywordFieldWeights:
+    """Relative importance of each keyword-search field."""
+
+    title: float = 0.40
+    subjects: float = 0.20
+    organisation: float = 0.05
+    resources: float = 0.15
+    description: float = 0.20
+
+    def as_dict(self) -> dict[str, float]:
+        """Return field weights by index field name."""
+
+        return {
+            "title": self.title,
+            "subjects": self.subjects,
+            "organisation": self.organisation,
+            "resources": self.resources,
+            "description": self.description,
+        }
+
+    def validated(self) -> KeywordFieldWeights:
+        """Validate and normalise the field weights."""
+
+        weights = self.as_dict()
+
+        negative_fields = [
+            field_name
+            for field_name, weight in weights.items()
+            if weight < 0
+        ]
+
+        if negative_fields:
+            raise ValueError(
+                "Keyword field weights cannot be negative: "
+                + ", ".join(negative_fields)
+            )
+
+        total_weight = sum(weights.values())
+
+        if total_weight <= 0:
+            raise ValueError(
+                "At least one keyword field weight must "
+                "be positive."
+            )
+
+        return replace(
+            self,
+            **{
+                field_name: weight / total_weight
+                for field_name, weight in weights.items()
+            },
+        )
 
 @dataclass(frozen=True)
 class SearchConfig:
@@ -49,6 +116,9 @@ class SearchConfig:
     rrf_k: int = 60
     diversity_lambda: float = 0.85
     diversity_pool: int = 100
+    keyword_field_weights: KeywordFieldWeights = field(
+        default_factory=KeywordFieldWeights
+    )
 
     def validated(self) -> SearchConfig:
         """Validate settings and normalise retrieval weights."""
@@ -94,6 +164,10 @@ class SearchConfig:
                 "At least one retrieval weight must be positive."
             )
 
+        validated_field_weights = (
+            self.keyword_field_weights.validated()
+        )
+
         return replace(
             self,
             semantic_weight=(
@@ -102,6 +176,7 @@ class SearchConfig:
             keyword_weight=(
                 self.keyword_weight / total_weight
             ),
+            keyword_field_weights=validated_field_weights,
         )
 
 
@@ -335,15 +410,28 @@ class SearchEngine:
             record_type="Embedding",
         )
 
-        if not KEYWORD_MATRIX_PATH.exists():
-            raise FileNotFoundError(
-                f"File not found: {KEYWORD_MATRIX_PATH}"
-            )
+        self.keyword_matrices: dict[
+            str,
+            sparse.csr_matrix,
+        ] = {}
 
-        self.keyword_matrix = sparse.csr_matrix(
-            sparse.load_npz(KEYWORD_MATRIX_PATH),
-            dtype=np.float32,
-        )
+        for (
+            field_name,
+            matrix_path,
+        ) in KEYWORD_FIELD_MATRIX_PATHS.items():
+            if not matrix_path.exists():
+                raise FileNotFoundError(
+                    f"File not found: {matrix_path}"
+                )
+
+            matrix = sparse.load_npz(matrix_path)
+
+            self.keyword_matrices[field_name] = (
+                sparse.csr_matrix(
+                    matrix,
+                    dtype=np.float32,
+                )
+            )
 
         if not KEYWORD_VECTORIZER_PATH.exists():
             raise FileNotFoundError(
@@ -455,25 +543,109 @@ class SearchEngine:
                 f"!= {embedding_dimensions}"
             )
 
-        if (
-            self.keyword_matrix.shape[0]
-            != keyword_count
-        ):
+        if self.keyword_manifest.get("index_version") != 2:
             raise RuntimeError(
-                "Keyword matrix row count does not match its "
-                f"manifest: {self.keyword_matrix.shape[0]} "
-                f"!= {keyword_count}"
+                "Expected field-aware keyword index version 2."
             )
 
         if (
-            self.keyword_matrix.shape[1]
-            != keyword_features
+            self.keyword_manifest.get("index_type")
+            != "field_aware_tfidf"
         ):
             raise RuntimeError(
-                "Keyword feature count does not match its "
-                f"manifest: {self.keyword_matrix.shape[1]} "
-                f"!= {keyword_features}"
+                "The keyword manifest does not describe a "
+                "field-aware TF-IDF index."
             )
+
+        manifest_fields = self.keyword_manifest.get(
+            "fields"
+        )
+
+        if not isinstance(manifest_fields, dict):
+            raise RuntimeError(
+                "The keyword manifest has no valid fields section."
+            )
+
+        expected_field_names = set(
+            KEYWORD_FIELD_MATRIX_PATHS
+        )
+
+        loaded_field_names = set(
+            self.keyword_matrices
+        )
+
+        if loaded_field_names != expected_field_names:
+            raise RuntimeError(
+                "The loaded keyword fields do not match the "
+                "configured fields."
+            )
+
+        missing_manifest_fields = (
+            expected_field_names
+            - set(manifest_fields)
+        )
+
+        if missing_manifest_fields:
+            raise RuntimeError(
+                "The keyword manifest is missing fields: "
+                + ", ".join(
+                    sorted(missing_manifest_fields)
+                )
+            )
+
+        expected_keyword_shape = (
+            keyword_count,
+            keyword_features,
+        )
+
+        for (
+            field_name,
+            matrix,
+        ) in self.keyword_matrices.items():
+            if matrix.shape != expected_keyword_shape:
+                raise RuntimeError(
+                    f"The {field_name} keyword matrix shape "
+                    "does not match the manifest: "
+                    f"{matrix.shape} != "
+                    f"{expected_keyword_shape}"
+                )
+
+            field_manifest = manifest_fields.get(
+                field_name
+            )
+
+            if not isinstance(field_manifest, dict):
+                raise RuntimeError(
+                    "The keyword manifest has no valid entry "
+                    f"for field {field_name}."
+                )
+
+            manifest_shape = field_manifest.get(
+                "shape"
+            )
+
+            if manifest_shape != list(matrix.shape):
+                raise RuntimeError(
+                    f"The {field_name} matrix shape does not "
+                    "match its field manifest: "
+                    f"{list(matrix.shape)} != "
+                    f"{manifest_shape}"
+                )
+
+            manifest_nonzero_values = (
+                field_manifest.get("nonzero_values")
+            )
+
+            if (
+                manifest_nonzero_values is not None
+                and matrix.nnz != manifest_nonzero_values
+            ):
+                raise RuntimeError(
+                    f"The {field_name} matrix nonzero count "
+                    "does not match its field manifest: "
+                    f"{matrix.nnz} != "
+                    f"{manifest_nonzero_values}"
+                )
 
         expected_rows = self.embeddings.shape[0]
 
@@ -489,11 +661,16 @@ class SearchEngine:
                 "embedding matrix."
             )
 
-        if self.keyword_matrix.shape[0] != expected_rows:
-            raise RuntimeError(
-                "The semantic and keyword indexes contain "
-                "different numbers of datasets."
-            )
+        for (
+            field_name,
+            matrix,
+        ) in self.keyword_matrices.items():
+            if matrix.shape[0] != expected_rows:
+                raise RuntimeError(
+                    "The semantic index and "
+                    f"{field_name} keyword index contain "
+                    "different numbers of datasets."
+                )
 
         embedding_ids = [
             record["dataset_id"]
@@ -567,8 +744,9 @@ class SearchEngine:
     def _calculate_keyword_scores(
         self,
         query: str,
+        field_weights: KeywordFieldWeights,
     ) -> tuple[np.ndarray, int]:
-        """Calculate keyword similarity for every dataset."""
+        """Calculate weighted field-aware keyword similarity."""
 
         query_vector = self.keyword_vectorizer.transform(
             [query]
@@ -581,24 +759,47 @@ class SearchEngine:
 
         feature_count = int(query_vector.nnz)
 
+        dataset_count = self.embeddings.shape[0]
+
         if feature_count == 0:
             return (
                 np.zeros(
-                    self.keyword_matrix.shape[0],
+                    dataset_count,
                     dtype=np.float32,
                 ),
                 0,
             )
 
-        scores = (
-            self.keyword_matrix
-            @ query_vector.transpose()
-        ).toarray().ravel()
+        weights = field_weights.as_dict()
 
-        return (
-            np.asarray(scores, dtype=np.float32),
-            feature_count,
+        combined_scores = np.zeros(
+            dataset_count,
+            dtype=np.float32,
         )
+
+        query_transpose = query_vector.transpose()
+
+        for (
+            field_name,
+            matrix,
+        ) in self.keyword_matrices.items():
+            field_score_matrix = (
+                matrix @ query_transpose
+            )
+
+            field_scores = np.asarray(
+                field_score_matrix.toarray()
+            ).ravel()
+
+            combined_scores += (
+                np.float32(weights[field_name])
+                * field_scores.astype(
+                    np.float32,
+                    copy=False,
+                )
+            )
+
+        return combined_scores, feature_count
 
     def _create_hybrid_ranking(
         self,
@@ -872,7 +1073,10 @@ class SearchEngine:
             keyword_scores,
             keyword_query_feature_count,
         ) = self._calculate_keyword_scores(
-            cleaned_query
+            query=cleaned_query,
+            field_weights=(
+                active_config.keyword_field_weights
+            ),
         )
 
         ranked_results = (
