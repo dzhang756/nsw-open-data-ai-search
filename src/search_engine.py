@@ -406,7 +406,7 @@ class SearchEngine:
             )
 
             actual_dimensions = (
-                self._model.get_sentence_embedding_dimension()
+                self._model.get_embedding_dimension()
             )
 
             if actual_dimensions != expected_dimensions:
