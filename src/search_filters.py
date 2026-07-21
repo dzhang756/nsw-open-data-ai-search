@@ -16,6 +16,7 @@ class SearchFilters:
     """Structured constraints applied before search ranking."""
 
     formats: tuple[str, ...] = ()
+    organisations: tuple[str, ...] = ()
     machine_readable_only: bool = False
 
     def validated(self) -> SearchFilters:
@@ -30,7 +31,9 @@ class SearchFilters:
                     "Every requested format must be a string."
                 )
 
-            normalised = normalise_format_value(value)
+            normalised = normalise_format_value(
+                value
+            )
 
             if not normalised:
                 continue
@@ -41,8 +44,41 @@ class SearchFilters:
             seen_formats.add(normalised)
             normalised_formats.append(normalised)
 
+        cleaned_organisations: list[str] = []
+        seen_organisations: set[str] = set()
+
+        for value in self.organisations:
+            if not isinstance(value, str):
+                raise ValueError(
+                    "Every requested organisation must "
+                    "be a string."
+                )
+
+            display_value = compact_text(value)
+            normalised_value = (
+                normalise_organisation_value(
+                    display_value
+                )
+            )
+
+            if not normalised_value:
+                continue
+
+            if normalised_value in seen_organisations:
+                continue
+
+            seen_organisations.add(
+                normalised_value
+            )
+            cleaned_organisations.append(
+                display_value
+            )
+
         return SearchFilters(
             formats=tuple(normalised_formats),
+            organisations=tuple(
+                cleaned_organisations
+            ),
             machine_readable_only=(
                 self.machine_readable_only
             ),
@@ -54,6 +90,7 @@ class SearchFilters:
 
         return bool(
             self.formats
+            or self.organisations
             or self.machine_readable_only
         )
 
@@ -70,20 +107,33 @@ class FilterResult:
     def excluded_count(self) -> int:
         """Return the number of excluded datasets."""
 
-        return self.total_count - self.eligible_count
+        return (
+            self.total_count
+            - self.eligible_count
+        )
 
 
-def normalise_format_value(value: str) -> str:
+def compact_text(value: str) -> str:
+    """Return compact single-line text."""
+
+    return " ".join(value.split())
+
+
+def normalise_format_value(
+    value: str,
+) -> str:
     """Normalise a requested or indexed format value."""
 
-    compact_value = " ".join(
-        value.upper().split()
+    compact_value = compact_text(
+        value.upper()
     )
 
     return compact_value.strip()
 
 
-def format_match_values(value: str) -> set[str]:
+def format_match_values(
+    value: str,
+) -> set[str]:
     """
     Create searchable aliases for one resource format.
 
@@ -93,7 +143,9 @@ def format_match_values(value: str) -> set[str]:
     - ARCGIS REST matches ARCGIS, REST and ARCGIS REST
     """
 
-    normalised = normalise_format_value(value)
+    normalised = normalise_format_value(
+        value
+    )
 
     if not normalised:
         return set()
@@ -104,7 +156,8 @@ def format_match_values(value: str) -> set[str]:
 
     tokens = [
         token
-        for token in NON_ALPHANUMERIC_PATTERN.split(
+        for token
+        in NON_ALPHANUMERIC_PATTERN.split(
             normalised
         )
         if token
@@ -113,6 +166,45 @@ def format_match_values(value: str) -> set[str]:
     match_values.update(tokens)
 
     return match_values
+
+
+def normalise_organisation_value(
+    value: str,
+) -> str:
+    """Normalise an organisation name for exact matching."""
+
+    return compact_text(
+        value
+    ).casefold()
+
+
+def dataset_organisation_title(
+    dataset: dict[str, Any],
+) -> str:
+    """Extract a dataset organisation's display title."""
+
+    organisation = dataset.get(
+        "organisation"
+    )
+
+    if isinstance(organisation, str):
+        return compact_text(
+            organisation
+        )
+
+    if not isinstance(organisation, dict):
+        return ""
+
+    value = (
+        organisation.get("title")
+        or organisation.get("display_name")
+        or organisation.get("name")
+    )
+
+    if not isinstance(value, str):
+        return ""
+
+    return compact_text(value)
 
 
 def dataset_format_values(
@@ -130,7 +222,10 @@ def dataset_format_values(
     values: set[str] = set()
 
     for resource_format in resource_formats:
-        if not isinstance(resource_format, str):
+        if not isinstance(
+            resource_format,
+            str,
+        ):
             continue
 
         values.update(
@@ -163,18 +258,43 @@ def dataset_matches_filters(
 
     if filters.formats:
         available_formats = (
-            dataset_format_values(dataset)
+            dataset_format_values(
+                dataset
+            )
         )
 
         requested_formats = set(
             filters.formats
         )
 
-        # Multiple requested formats use OR logic:
-        # CSV + JSON means either CSV or JSON is accepted.
+        # Multiple formats use OR logic.
         if not (
             available_formats
             & requested_formats
+        ):
+            return False
+
+    if filters.organisations:
+        dataset_organisation = (
+            normalise_organisation_value(
+                dataset_organisation_title(
+                    dataset
+                )
+            )
+        )
+
+        requested_organisations = {
+            normalise_organisation_value(
+                organisation
+            )
+            for organisation
+            in filters.organisations
+        }
+
+        # Multiple organisations use OR logic.
+        if (
+            dataset_organisation
+            not in requested_organisations
         ):
             return False
 
@@ -191,7 +311,10 @@ def dataset_matches_filters(
 
 def build_eligible_mask(
     index_records: list[dict[str, Any]],
-    metadata_by_id: dict[str, dict[str, Any]],
+    metadata_by_id: dict[
+        str,
+        dict[str, Any],
+    ],
     filters: SearchFilters | None = None,
 ) -> FilterResult:
     """Build a Boolean mask for datasets satisfying filters."""

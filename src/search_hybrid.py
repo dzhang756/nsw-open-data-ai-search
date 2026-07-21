@@ -158,6 +158,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--organisation",
+        action="append",
+        default=[],
+        dest="organisations",
+        help=(
+            "Require an exact organisation name. "
+            "Matching is case-insensitive. Repeat this "
+            "option to accept multiple organisations "
+            "using OR logic."
+        ),
+    )
+
+    parser.add_argument(
         "--machine-readable-only",
         action="store_true",
         help=(
@@ -213,6 +226,17 @@ def print_response(
         + (
             ", ".join(filters.formats)
             if filters.formats
+            else "None"
+        )
+    )
+
+    print(
+        "Organisation filter: "
+        + (
+            ", ".join(
+                filters.organisations
+            )
+            if filters.organisations
             else "None"
         )
     )
@@ -370,6 +394,9 @@ def main() -> None:
         filters = SearchFilters(
             formats=tuple(
                 arguments.formats
+            ),
+            organisations=tuple(
+                arguments.organisations
             ),
             machine_readable_only=(
                 arguments.machine_readable_only
