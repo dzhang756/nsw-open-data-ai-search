@@ -122,7 +122,7 @@ class SearchConfig:
     semantic_weight: float = 0.70
     keyword_weight: float = 0.30
     rrf_k: int = 60
-    diversity_lambda: float = 0.85
+    diversity_lambda: float = 1.0
     diversity_pool: int = 100
     keyword_field_weights: KeywordFieldWeights = field(
         default_factory=KeywordFieldWeights
