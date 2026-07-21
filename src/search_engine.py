@@ -12,6 +12,11 @@ from scipy import sparse
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+from src.search_filters import (
+    SearchFilters,
+    build_eligible_mask,
+)
+
 CLEAN_CATALOGUE_PATH = Path(
     "data/processed/catalogue_clean.jsonl.gz"
 )
@@ -41,6 +46,7 @@ KEYWORD_FIELD_MATRIX_PATHS = {
         "data/index/keyword_description_matrix.npz"
     ),
 }
+
 KEYWORD_VECTORIZER_PATH = Path(
     "data/index/keyword_vectorizer.joblib"
 )
@@ -50,6 +56,7 @@ KEYWORD_RECORDS_PATH = Path(
 KEYWORD_MANIFEST_PATH = Path(
     "data/index/keyword_manifest.json"
 )
+
 
 @dataclass(frozen=True)
 class KeywordFieldWeights:
@@ -62,7 +69,7 @@ class KeywordFieldWeights:
     description: float = 0.20
 
     def as_dict(self) -> dict[str, float]:
-        """Return field weights by index field name."""
+        """Return weights by keyword field name."""
 
         return {
             "title": self.title,
@@ -73,7 +80,7 @@ class KeywordFieldWeights:
         }
 
     def validated(self) -> KeywordFieldWeights:
-        """Validate and normalise the field weights."""
+        """Validate and normalise field weights."""
 
         weights = self.as_dict()
 
@@ -105,9 +112,10 @@ class KeywordFieldWeights:
             },
         )
 
+
 @dataclass(frozen=True)
 class SearchConfig:
-    """Settings controlling hybrid retrieval and diversification."""
+    """Settings controlling retrieval and diversification."""
 
     top_k: int = 10
     candidate_pool: int = 200
@@ -121,10 +129,12 @@ class SearchConfig:
     )
 
     def validated(self) -> SearchConfig:
-        """Validate settings and normalise retrieval weights."""
+        """Validate settings and normalise weights."""
 
         if self.top_k <= 0:
-            raise ValueError("top_k must be greater than zero.")
+            raise ValueError(
+                "top_k must be greater than zero."
+            )
 
         if self.candidate_pool <= 0:
             raise ValueError(
@@ -132,7 +142,9 @@ class SearchConfig:
             )
 
         if self.rrf_k <= 0:
-            raise ValueError("rrf_k must be greater than zero.")
+            raise ValueError(
+                "rrf_k must be greater than zero."
+            )
 
         if self.diversity_pool <= 0:
             raise ValueError(
@@ -161,7 +173,8 @@ class SearchConfig:
 
         if total_weight <= 0:
             raise ValueError(
-                "At least one retrieval weight must be positive."
+                "At least one retrieval weight must "
+                "be positive."
             )
 
         validated_field_weights = (
@@ -176,7 +189,9 @@ class SearchConfig:
             keyword_weight=(
                 self.keyword_weight / total_weight
             ),
-            keyword_field_weights=validated_field_weights,
+            keyword_field_weights=(
+                validated_field_weights
+            ),
         )
 
 
@@ -206,16 +221,29 @@ class SearchResponse:
 
     query: str
     config: SearchConfig
+    filters: SearchFilters
     results: tuple[SearchResult, ...]
     catalogue_size: int
+    eligible_dataset_count: int
     keyword_query_feature_count: int
+
+    @property
+    def excluded_dataset_count(self) -> int:
+        """Return datasets excluded by structured filters."""
+
+        return (
+            self.catalogue_size
+            - self.eligible_dataset_count
+        )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
     """Load a JSON object from disk."""
 
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(
+            f"File not found: {path}"
+        )
 
     with path.open(
         mode="r",
@@ -238,7 +266,9 @@ def _load_row_records(
     """Load and validate a row-to-dataset mapping file."""
 
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(
+            f"File not found: {path}"
+        )
 
     records: list[dict[str, Any]] = []
     seen_dataset_ids: set[str] = set()
@@ -268,7 +298,10 @@ def _load_row_records(
                     f"{row_index}."
                 )
 
-            if not isinstance(dataset_id, str) or not dataset_id:
+            if (
+                not isinstance(dataset_id, str)
+                or not dataset_id
+            ):
                 raise RuntimeError(
                     f"{record_type} row {row_index} has no "
                     "valid dataset ID."
@@ -286,7 +319,10 @@ def _load_row_records(
     return records
 
 
-def _load_catalogue_metadata() -> dict[str, dict[str, Any]]:
+def _load_catalogue_metadata() -> dict[
+    str,
+    dict[str, Any],
+]:
     """Load cleaned catalogue metadata by dataset ID."""
 
     if not CLEAN_CATALOGUE_PATH.exists():
@@ -294,14 +330,20 @@ def _load_catalogue_metadata() -> dict[str, dict[str, Any]]:
             f"File not found: {CLEAN_CATALOGUE_PATH}"
         )
 
-    metadata_by_id: dict[str, dict[str, Any]] = {}
+    metadata_by_id: dict[
+        str,
+        dict[str, Any],
+    ] = {}
 
     with gzip.open(
         CLEAN_CATALOGUE_PATH,
         mode="rt",
         encoding="utf-8",
     ) as file:
-        for line_number, line in enumerate(file, start=1):
+        for line_number, line in enumerate(
+            file,
+            start=1,
+        ):
             try:
                 dataset = json.loads(line)
             except json.JSONDecodeError as error:
@@ -312,15 +354,19 @@ def _load_catalogue_metadata() -> dict[str, dict[str, Any]]:
 
             dataset_id = dataset.get("dataset_id")
 
-            if not isinstance(dataset_id, str) or not dataset_id:
+            if (
+                not isinstance(dataset_id, str)
+                or not dataset_id
+            ):
                 raise RuntimeError(
-                    "A cleaned catalogue record has no valid "
-                    f"dataset ID on line {line_number}."
+                    "A cleaned catalogue record has no "
+                    f"valid dataset ID on line {line_number}."
                 )
 
             if dataset_id in metadata_by_id:
                 raise RuntimeError(
-                    f"Duplicate cleaned dataset ID: {dataset_id}"
+                    "Duplicate cleaned dataset ID: "
+                    f"{dataset_id}"
                 )
 
             metadata_by_id[dataset_id] = dataset
@@ -328,8 +374,10 @@ def _load_catalogue_metadata() -> dict[str, dict[str, Any]]:
     return metadata_by_id
 
 
-def _organisation_title(dataset: dict[str, Any]) -> str:
-    """Return a dataset organisation's display title."""
+def _organisation_title(
+    dataset: dict[str, Any],
+) -> str:
+    """Return the organisation display title."""
 
     organisation = dataset.get("organisation")
 
@@ -367,7 +415,10 @@ def _build_rank_array(
 ) -> np.ndarray:
     """Convert ordered row indices to one-based ranks."""
 
-    ranks = np.zeros(total_rows, dtype=np.int32)
+    ranks = np.zeros(
+        total_rows,
+        dtype=np.int32,
+    )
 
     ranks[ordered_indices] = np.arange(
         1,
@@ -385,6 +436,7 @@ class SearchEngine:
         self.embedding_manifest = _load_json(
             EMBEDDING_MANIFEST_PATH
         )
+
         self.keyword_manifest = _load_json(
             KEYWORD_MANIFEST_PATH
         )
@@ -401,8 +453,8 @@ class SearchEngine:
 
         if self.embeddings.ndim != 2:
             raise RuntimeError(
-                "Expected a two-dimensional embedding matrix, "
-                f"received shape {self.embeddings.shape}."
+                "Expected a two-dimensional embedding "
+                f"matrix, received {self.embeddings.shape}."
             )
 
         self.embedding_records = _load_row_records(
@@ -424,7 +476,9 @@ class SearchEngine:
                     f"File not found: {matrix_path}"
                 )
 
-            matrix = sparse.load_npz(matrix_path)
+            matrix = sparse.load_npz(
+                matrix_path
+            )
 
             self.keyword_matrices[field_name] = (
                 sparse.csr_matrix(
@@ -435,14 +489,18 @@ class SearchEngine:
 
         if not KEYWORD_VECTORIZER_PATH.exists():
             raise FileNotFoundError(
-                f"File not found: {KEYWORD_VECTORIZER_PATH}"
+                f"File not found: "
+                f"{KEYWORD_VECTORIZER_PATH}"
             )
 
         vectorizer = joblib.load(
             KEYWORD_VECTORIZER_PATH
         )
 
-        if not isinstance(vectorizer, TfidfVectorizer):
+        if not isinstance(
+            vectorizer,
+            TfidfVectorizer,
+        ):
             raise RuntimeError(
                 "The loaded keyword vectorizer has an "
                 "unexpected object type."
@@ -455,7 +513,9 @@ class SearchEngine:
             record_type="Keyword",
         )
 
-        self.metadata_by_id = _load_catalogue_metadata()
+        self.metadata_by_id = (
+            _load_catalogue_metadata()
+        )
 
         self._model: SentenceTransformer | None = None
 
@@ -469,7 +529,10 @@ class SearchEngine:
             "model_name"
         )
 
-        if not isinstance(model_name, str) or not model_name:
+        if (
+            not isinstance(model_name, str)
+            or not model_name
+        ):
             raise RuntimeError(
                 "The embedding manifest has no model name."
             )
@@ -478,7 +541,7 @@ class SearchEngine:
 
     @property
     def model(self) -> SentenceTransformer:
-        """Load the query model only when first required."""
+        """Load the query model when first required."""
 
         if self._model is None:
             print(
@@ -499,8 +562,8 @@ class SearchEngine:
 
             if actual_dimensions != expected_dimensions:
                 raise RuntimeError(
-                    "The query model embedding dimensions do "
-                    "not match the stored index: "
+                    "The query model dimensions do not "
+                    "match the stored index: "
                     f"{actual_dimensions} != "
                     f"{expected_dimensions}"
                 )
@@ -508,22 +571,30 @@ class SearchEngine:
         return self._model
 
     def _validate_loaded_indexes(self) -> None:
-        """Validate row counts, dimensions and ID alignment."""
+        """Validate dimensions, counts and ID alignment."""
 
-        embedding_count = self.embedding_manifest.get(
-            "dataset_count"
+        embedding_count = (
+            self.embedding_manifest.get(
+                "dataset_count"
+            )
         )
+
         embedding_dimensions = (
             self.embedding_manifest.get(
                 "embedding_dimensions"
             )
         )
 
-        keyword_count = self.keyword_manifest.get(
-            "dataset_count"
+        keyword_count = (
+            self.keyword_manifest.get(
+                "dataset_count"
+            )
         )
-        keyword_features = self.keyword_manifest.get(
-            "feature_count"
+
+        keyword_features = (
+            self.keyword_manifest.get(
+                "feature_count"
+            )
         )
 
         if self.embeddings.shape[0] != embedding_count:
@@ -543,9 +614,13 @@ class SearchEngine:
                 f"!= {embedding_dimensions}"
             )
 
-        if self.keyword_manifest.get("index_version") != 2:
+        if (
+            self.keyword_manifest.get("index_version")
+            != 2
+        ):
             raise RuntimeError(
-                "Expected field-aware keyword index version 2."
+                "Expected field-aware keyword index "
+                "version 2."
             )
 
         if (
@@ -553,17 +628,18 @@ class SearchEngine:
             != "field_aware_tfidf"
         ):
             raise RuntimeError(
-                "The keyword manifest does not describe a "
-                "field-aware TF-IDF index."
+                "The keyword manifest does not describe "
+                "a field-aware TF-IDF index."
             )
 
-        manifest_fields = self.keyword_manifest.get(
-            "fields"
+        manifest_fields = (
+            self.keyword_manifest.get("fields")
         )
 
         if not isinstance(manifest_fields, dict):
             raise RuntimeError(
-                "The keyword manifest has no valid fields section."
+                "The keyword manifest has no valid "
+                "fields section."
             )
 
         expected_field_names = set(
@@ -574,10 +650,13 @@ class SearchEngine:
             self.keyword_matrices
         )
 
-        if loaded_field_names != expected_field_names:
+        if (
+            loaded_field_names
+            != expected_field_names
+        ):
             raise RuntimeError(
-                "The loaded keyword fields do not match the "
-                "configured fields."
+                "Loaded keyword fields do not match "
+                "the configured fields."
             )
 
         missing_manifest_fields = (
@@ -604,8 +683,8 @@ class SearchEngine:
         ) in self.keyword_matrices.items():
             if matrix.shape != expected_keyword_shape:
                 raise RuntimeError(
-                    f"The {field_name} keyword matrix shape "
-                    "does not match the manifest: "
+                    f"The {field_name} keyword matrix "
+                    "shape does not match the manifest: "
                     f"{matrix.shape} != "
                     f"{expected_keyword_shape}"
                 )
@@ -614,10 +693,13 @@ class SearchEngine:
                 field_name
             )
 
-            if not isinstance(field_manifest, dict):
+            if not isinstance(
+                field_manifest,
+                dict,
+            ):
                 raise RuntimeError(
-                    "The keyword manifest has no valid entry "
-                    f"for field {field_name}."
+                    "The keyword manifest has no valid "
+                    f"entry for field {field_name}."
                 )
 
             manifest_shape = field_manifest.get(
@@ -626,39 +708,44 @@ class SearchEngine:
 
             if manifest_shape != list(matrix.shape):
                 raise RuntimeError(
-                    f"The {field_name} matrix shape does not "
-                    "match its field manifest: "
-                    f"{list(matrix.shape)} != "
-                    f"{manifest_shape}"
+                    f"The {field_name} matrix shape does "
+                    "not match its field manifest."
                 )
 
             manifest_nonzero_values = (
-                field_manifest.get("nonzero_values")
+                field_manifest.get(
+                    "nonzero_values"
+                )
             )
 
             if (
                 manifest_nonzero_values is not None
-                and matrix.nnz != manifest_nonzero_values
+                and matrix.nnz
+                != manifest_nonzero_values
             ):
                 raise RuntimeError(
-                    f"The {field_name} matrix nonzero count "
-                    "does not match its field manifest: "
-                    f"{matrix.nnz} != "
-                    f"{manifest_nonzero_values}"
+                    f"The {field_name} matrix nonzero "
+                    "count does not match its manifest."
                 )
 
         expected_rows = self.embeddings.shape[0]
 
-        if len(self.embedding_records) != expected_rows:
+        if (
+            len(self.embedding_records)
+            != expected_rows
+        ):
             raise RuntimeError(
-                "Embedding record count does not match the "
-                "embedding matrix."
+                "Embedding record count does not match "
+                "the embedding matrix."
             )
 
-        if len(self.keyword_records) != expected_rows:
+        if (
+            len(self.keyword_records)
+            != expected_rows
+        ):
             raise RuntimeError(
-                "Keyword record count does not match the "
-                "embedding matrix."
+                "Keyword record count does not match "
+                "the embedding matrix."
             )
 
         for (
@@ -684,27 +771,31 @@ class SearchEngine:
 
         if embedding_ids != keyword_ids:
             raise RuntimeError(
-                "The semantic and keyword indexes do not use "
-                "the same dataset row order."
+                "The semantic and keyword indexes do not "
+                "use the same dataset row order."
             )
 
         missing_metadata_ids = [
             dataset_id
             for dataset_id in embedding_ids
-            if dataset_id not in self.metadata_by_id
+            if dataset_id
+            not in self.metadata_by_id
         ]
 
         if missing_metadata_ids:
             raise RuntimeError(
                 "Cleaned metadata is missing for "
-                f"{len(missing_metadata_ids):,} indexed "
-                "datasets."
+                f"{len(missing_metadata_ids):,} "
+                "indexed datasets."
             )
 
-        if len(self.metadata_by_id) != expected_rows:
+        if (
+            len(self.metadata_by_id)
+            != expected_rows
+        ):
             raise RuntimeError(
-                "The cleaned catalogue size does not match "
-                f"the search indexes: "
+                "The cleaned catalogue size does not "
+                "match the search indexes: "
                 f"{len(self.metadata_by_id)} != "
                 f"{expected_rows}"
             )
@@ -746,10 +837,12 @@ class SearchEngine:
         query: str,
         field_weights: KeywordFieldWeights,
     ) -> tuple[np.ndarray, int]:
-        """Calculate weighted field-aware keyword similarity."""
+        """Calculate weighted field-aware keyword scores."""
 
-        query_vector = self.keyword_vectorizer.transform(
-            [query]
+        query_vector = (
+            self.keyword_vectorizer.transform(
+                [query]
+            )
         )
 
         query_vector = sparse.csr_matrix(
@@ -757,7 +850,9 @@ class SearchEngine:
             dtype=np.float32,
         )
 
-        feature_count = int(query_vector.nnz)
+        feature_count = int(
+            query_vector.nnz
+        )
 
         dataset_count = self.embeddings.shape[0]
 
@@ -777,7 +872,9 @@ class SearchEngine:
             dtype=np.float32,
         )
 
-        query_transpose = query_vector.transpose()
+        query_transpose = (
+            query_vector.transpose()
+        )
 
         for (
             field_name,
@@ -792,7 +889,9 @@ class SearchEngine:
             ).ravel()
 
             combined_scores += (
-                np.float32(weights[field_name])
+                np.float32(
+                    weights[field_name]
+                )
                 * field_scores.astype(
                     np.float32,
                     copy=False,
@@ -805,9 +904,10 @@ class SearchEngine:
         self,
         semantic_scores: np.ndarray,
         keyword_scores: np.ndarray,
+        eligible_mask: np.ndarray,
         config: SearchConfig,
     ) -> list[tuple[int, float, int, int]]:
-        """Combine rankings using weighted reciprocal rank fusion."""
+        """Combine eligible rankings using weighted RRF."""
 
         total_rows = len(semantic_scores)
 
@@ -817,45 +917,75 @@ class SearchEngine:
                 "different lengths."
             )
 
-        pool_size = min(
-            config.candidate_pool,
-            total_rows,
+        if eligible_mask.shape != (total_rows,):
+            raise RuntimeError(
+                "The eligible-row mask does not match "
+                "the search-index size."
+            )
+
+        eligible_indices = np.flatnonzero(
+            eligible_mask
         )
 
-        semantic_order = np.argsort(
-            semantic_scores,
+        if len(eligible_indices) == 0:
+            return []
+
+        pool_size = min(
+            config.candidate_pool,
+            len(eligible_indices),
+        )
+
+        semantic_local_order = np.argsort(
+            semantic_scores[eligible_indices],
             kind="stable",
         )[::-1]
+
+        semantic_order = eligible_indices[
+            semantic_local_order
+        ]
 
         semantic_ranks = _build_rank_array(
             semantic_order,
             total_rows,
         )
 
-        positive_keyword_indices = np.flatnonzero(
-            keyword_scores > 0
+        positive_keyword_indices = (
+            np.flatnonzero(
+                (keyword_scores > 0)
+                & eligible_mask
+            )
         )
 
-        keyword_order = positive_keyword_indices[
-            np.argsort(
-                keyword_scores[positive_keyword_indices],
-                kind="stable",
-            )[::-1]
-        ]
+        keyword_local_order = np.argsort(
+            keyword_scores[
+                positive_keyword_indices
+            ],
+            kind="stable",
+        )[::-1]
+
+        keyword_order = (
+            positive_keyword_indices[
+                keyword_local_order
+            ]
+        )
 
         keyword_ranks = _build_rank_array(
             keyword_order,
             total_rows,
         )
 
-        candidate_indices = set(
+        candidate_indices = {
             int(index)
-            for index in semantic_order[:pool_size]
-        )
+            for index in semantic_order[
+                :pool_size
+            ]
+        }
 
         candidate_indices.update(
             int(index)
-            for index in keyword_order[:pool_size]
+            for index in keyword_order[
+                :pool_size
+            ]
         )
 
         ranked_candidates: list[
@@ -866,19 +996,26 @@ class SearchEngine:
             semantic_rank = int(
                 semantic_ranks[row_index]
             )
+
             keyword_rank = int(
                 keyword_ranks[row_index]
             )
 
             hybrid_score = (
                 config.semantic_weight
-                / (config.rrf_k + semantic_rank)
+                / (
+                    config.rrf_k
+                    + semantic_rank
+                )
             )
 
             if keyword_rank > 0:
                 hybrid_score += (
                     config.keyword_weight
-                    / (config.rrf_k + keyword_rank)
+                    / (
+                        config.rrf_k
+                        + keyword_rank
+                    )
                 )
 
             ranked_candidates.append(
@@ -908,7 +1045,7 @@ class SearchEngine:
         ],
         config: SearchConfig,
     ) -> list[tuple[int, float, int, int]]:
-        """Apply Maximal Marginal Relevance diversification."""
+        """Apply Maximal Marginal Relevance."""
 
         if not ranked_results:
             return []
@@ -921,10 +1058,14 @@ class SearchEngine:
             len(ranked_results),
         )
 
-        candidates = ranked_results[:pool_size]
+        candidates = ranked_results[
+            :pool_size
+        ]
 
         if config.diversity_lambda >= 1.0:
-            return candidates[: config.top_k]
+            return candidates[
+                :config.top_k
+            ]
 
         row_indices = np.asarray(
             [
@@ -950,15 +1091,20 @@ class SearchEngine:
         minimum_score = float(
             hybrid_scores.min()
         )
+
         maximum_score = float(
             hybrid_scores.max()
         )
 
-        score_range = maximum_score - minimum_score
+        score_range = (
+            maximum_score
+            - minimum_score
+        )
 
         if score_range > 0:
             relevance_scores = (
-                hybrid_scores - minimum_score
+                hybrid_scores
+                - minimum_score
             ) / score_range
         else:
             relevance_scores = np.ones_like(
@@ -967,14 +1113,21 @@ class SearchEngine:
             )
 
         selected_local_indices: list[int] = [
-            int(np.argmax(relevance_scores))
+            int(
+                np.argmax(
+                    relevance_scores
+                )
+            )
         ]
 
         available = np.ones(
             len(candidates),
             dtype=bool,
         )
-        available[selected_local_indices[0]] = False
+
+        available[
+            selected_local_indices[0]
+        ] = False
 
         target_count = min(
             config.top_k,
@@ -985,22 +1138,28 @@ class SearchEngine:
             len(selected_local_indices)
             < target_count
         ):
-            remaining_indices = np.flatnonzero(
-                available
+            remaining_indices = (
+                np.flatnonzero(
+                    available
+                )
             )
 
             if len(remaining_indices) == 0:
                 break
 
-            selected_vectors = candidate_vectors[
-                np.asarray(
-                    selected_local_indices,
-                    dtype=np.int64,
-                )
-            ]
+            selected_vectors = (
+                candidate_vectors[
+                    np.asarray(
+                        selected_local_indices,
+                        dtype=np.int64,
+                    )
+                ]
+            )
 
             similarities = (
-                candidate_vectors[remaining_indices]
+                candidate_vectors[
+                    remaining_indices
+                ]
                 @ selected_vectors.transpose()
             )
 
@@ -1017,7 +1176,9 @@ class SearchEngine:
 
             mmr_scores = (
                 config.diversity_lambda
-                * relevance_scores[remaining_indices]
+                * relevance_scores[
+                    remaining_indices
+                ]
                 - (
                     1.0
                     - config.diversity_lambda
@@ -1030,25 +1191,32 @@ class SearchEngine:
             )
 
             selected_index = int(
-                remaining_indices[best_position]
+                remaining_indices[
+                    best_position
+                ]
             )
 
             selected_local_indices.append(
                 selected_index
             )
-            available[selected_index] = False
+
+            available[
+                selected_index
+            ] = False
 
         return [
             candidates[index]
-            for index in selected_local_indices
+            for index
+            in selected_local_indices
         ]
 
     def search(
         self,
         query: str,
         config: SearchConfig | None = None,
+        filters: SearchFilters | None = None,
     ) -> SearchResponse:
-        """Run hybrid search and return structured results."""
+        """Run filtered hybrid search."""
 
         cleaned_query = " ".join(
             query.split()
@@ -1063,10 +1231,18 @@ class SearchEngine:
             config or SearchConfig()
         ).validated()
 
-        semantic_scores = (
-            self._calculate_semantic_scores(
-                cleaned_query
-            )
+        active_filters = (
+            filters or SearchFilters()
+        ).validated()
+
+        filter_result = build_eligible_mask(
+            index_records=(
+                self.embedding_records
+            ),
+            metadata_by_id=(
+                self.metadata_by_id
+            ),
+            filters=active_filters,
         )
 
         (
@@ -1075,14 +1251,41 @@ class SearchEngine:
         ) = self._calculate_keyword_scores(
             query=cleaned_query,
             field_weights=(
-                active_config.keyword_field_weights
+                active_config
+                .keyword_field_weights
             ),
+        )
+
+        # Avoid loading the semantic model when the filters
+        # exclude every indexed dataset.
+        if filter_result.eligible_count == 0:
+            return SearchResponse(
+                query=cleaned_query,
+                config=active_config,
+                filters=active_filters,
+                results=(),
+                catalogue_size=(
+                    filter_result.total_count
+                ),
+                eligible_dataset_count=0,
+                keyword_query_feature_count=(
+                    keyword_query_feature_count
+                ),
+            )
+
+        semantic_scores = (
+            self._calculate_semantic_scores(
+                cleaned_query
+            )
         )
 
         ranked_results = (
             self._create_hybrid_ranking(
                 semantic_scores=semantic_scores,
                 keyword_scores=keyword_scores,
+                eligible_mask=(
+                    filter_result.eligible_mask
+                ),
                 config=active_config,
             )
         )
@@ -1102,9 +1305,11 @@ class SearchEngine:
             semantic_rank,
             keyword_rank,
         ) in selected_results:
-            dataset_id = self.embedding_records[
-                row_index
-            ]["dataset_id"]
+            dataset_id = (
+                self.embedding_records[
+                    row_index
+                ]["dataset_id"]
+            )
 
             dataset = self.metadata_by_id[
                 dataset_id
@@ -1119,14 +1324,20 @@ class SearchEngine:
                         or "Untitled dataset"
                     ),
                     description=(
-                        dataset.get("description")
+                        dataset.get(
+                            "description"
+                        )
                         or ""
                     ),
                     organisation=(
-                        _organisation_title(dataset)
+                        _organisation_title(
+                            dataset
+                        )
                     ),
                     resource_formats=(
-                        _resource_formats(dataset)
+                        _resource_formats(
+                            dataset
+                        )
                     ),
                     metadata_modified=(
                         dataset.get(
@@ -1135,18 +1346,26 @@ class SearchEngine:
                         or ""
                     ),
                     dataset_url=(
-                        dataset.get("dataset_url")
+                        dataset.get(
+                            "dataset_url"
+                        )
                         or ""
                     ),
                     hybrid_score=float(
                         hybrid_score
                     ),
                     semantic_score=float(
-                        semantic_scores[row_index]
+                        semantic_scores[
+                            row_index
+                        ]
                     ),
-                    semantic_rank=semantic_rank,
+                    semantic_rank=(
+                        semantic_rank
+                    ),
                     keyword_score=float(
-                        keyword_scores[row_index]
+                        keyword_scores[
+                            row_index
+                        ]
                     ),
                     keyword_rank=(
                         keyword_rank
@@ -1159,8 +1378,14 @@ class SearchEngine:
         return SearchResponse(
             query=cleaned_query,
             config=active_config,
+            filters=active_filters,
             results=tuple(results),
-            catalogue_size=self.embeddings.shape[0],
+            catalogue_size=(
+                filter_result.total_count
+            ),
+            eligible_dataset_count=(
+                filter_result.eligible_count
+            ),
             keyword_query_feature_count=(
                 keyword_query_feature_count
             ),
