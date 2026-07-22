@@ -9,6 +9,7 @@ from typing import Any
 
 
 INDEX_DIRECTORY = Path("data/index")
+PROCESSED_DIRECTORY = Path("data/processed")
 OUTPUT_DIRECTORY = Path("dist")
 
 BUNDLE_FILENAME = "search-index.tar.gz"
@@ -23,13 +24,28 @@ REQUIRED_INDEX_FILES = (
     "embeddings.npy",
     "keyword_description_matrix.npz",
     "keyword_manifest.json",
-    "keyword_matrix.npz",
     "keyword_organisation_matrix.npz",
     "keyword_records.jsonl.gz",
     "keyword_resources_matrix.npz",
     "keyword_subjects_matrix.npz",
     "keyword_title_matrix.npz",
     "keyword_vectorizer.joblib",
+)
+
+REQUIRED_PROCESSED_FILES = (
+    "catalogue_clean.jsonl.gz",
+    "catalogue_clean_manifest.json",
+)
+
+REQUIRED_RELEASE_FILES = (
+    tuple(
+        INDEX_DIRECTORY / filename
+        for filename in REQUIRED_INDEX_FILES
+    )
+    + tuple(
+        PROCESSED_DIRECTORY / filename
+        for filename in REQUIRED_PROCESSED_FILES
+    )
 )
 
 
@@ -48,10 +64,8 @@ def sha256_file(
     return digest.hexdigest()
 
 
-def load_json_file(
-    file_path: Path,
-) -> dict[str, Any]:
-    """Read a JSON object from disk."""
+def load_json_file(file_path: Path) -> dict[str, Any]:
+    """Read and validate a JSON object from disk."""
 
     try:
         with file_path.open(
@@ -76,62 +90,39 @@ def load_json_file(
     return value
 
 
-def validate_index_files() -> tuple[Path, ...]:
-    """Confirm that all required index files exist."""
-
-    if not INDEX_DIRECTORY.is_dir():
-        raise FileNotFoundError(
-            f"Index directory does not exist: "
-            f"{INDEX_DIRECTORY}"
-        )
+def validate_release_files() -> tuple[Path, ...]:
+    """Confirm that all files required by the hosted app exist."""
 
     missing_files = [
-        filename
-        for filename in REQUIRED_INDEX_FILES
-        if not (
-            INDEX_DIRECTORY / filename
-        ).is_file()
+        file_path
+        for file_path in REQUIRED_RELEASE_FILES
+        if not file_path.is_file()
     ]
 
     if missing_files:
         missing_text = "\n".join(
-            f"  - {filename}"
-            for filename in missing_files
+            f"  - {file_path.as_posix()}"
+            for file_path in missing_files
         )
 
         raise FileNotFoundError(
-            "The search index is incomplete. "
+            "The search-index release is incomplete. "
             "Missing required files:\n"
             f"{missing_text}"
         )
 
-    index_files = tuple(
+    return tuple(
         sorted(
-            (
-                file_path
-                for file_path
-                in INDEX_DIRECTORY.iterdir()
-                if (
-                    file_path.is_file()
-                    and file_path.name != ".gitkeep"
-                )
-            ),
-            key=lambda path: path.name.casefold(),
+            REQUIRED_RELEASE_FILES,
+            key=lambda path: path.as_posix().casefold(),
         )
     )
 
-    if not index_files:
-        raise RuntimeError(
-            "No generated search-index files were found."
-        )
-
-    return index_files
-
 
 def create_bundle(
-    index_files: tuple[Path, ...],
+    release_files: tuple[Path, ...],
 ) -> None:
-    """Create a compressed archive containing the index."""
+    """Create a compressed archive containing the release files."""
 
     OUTPUT_DIRECTORY.mkdir(
         parents=True,
@@ -139,50 +130,34 @@ def create_bundle(
     )
 
     BUNDLE_PATH.unlink(
-        missing_ok=True
+        missing_ok=True,
     )
 
     with tarfile.open(
         BUNDLE_PATH,
         mode="w:gz",
     ) as archive:
-        for file_path in index_files:
-            archive_path = (
-                Path("data")
-                / "index"
-                / file_path.name
-            )
-
+        for file_path in release_files:
             archive.add(
                 file_path,
-                arcname=archive_path.as_posix(),
+                arcname=file_path.as_posix(),
                 recursive=False,
             )
 
 
 def create_file_records(
-    index_files: tuple[Path, ...],
+    release_files: tuple[Path, ...],
 ) -> list[dict[str, object]]:
-    """Create size and checksum records for index files."""
+    """Create size and checksum records for packaged files."""
 
-    records: list[
-        dict[str, object]
-    ] = []
+    records: list[dict[str, object]] = []
 
-    for file_path in index_files:
+    for file_path in release_files:
         records.append(
             {
-                "path": (
-                    Path("data")
-                    / "index"
-                    / file_path.name
-                ).as_posix(),
-                "size_bytes": (
-                    file_path.stat().st_size
-                ),
-                "sha256": sha256_file(
-                    file_path
-                ),
+                "path": file_path.as_posix(),
+                "size_bytes": file_path.stat().st_size,
+                "sha256": sha256_file(file_path),
             }
         )
 
@@ -190,14 +165,19 @@ def create_file_records(
 
 
 def create_release_manifest(
-    index_files: tuple[Path, ...],
+    release_files: tuple[Path, ...],
 ) -> dict[str, object]:
-    """Create metadata for the packaged search index."""
+    """Create metadata describing the packaged search index."""
 
     if not BUNDLE_PATH.is_file():
         raise FileNotFoundError(
             f"Bundle was not created: {BUNDLE_PATH}"
         )
+
+    catalogue_clean_manifest = load_json_file(
+        PROCESSED_DIRECTORY
+        / "catalogue_clean_manifest.json"
+    )
 
     embedding_manifest = load_json_file(
         INDEX_DIRECTORY
@@ -217,7 +197,12 @@ def create_release_manifest(
     )
 
     file_records = create_file_records(
-        index_files
+        release_files
+    )
+
+    total_uncompressed_bytes = sum(
+        file_path.stat().st_size
+        for file_path in release_files
     )
 
     return {
@@ -225,24 +210,20 @@ def create_release_manifest(
         "generated_at_utc": generated_at,
         "bundle": {
             "filename": BUNDLE_FILENAME,
-            "size_bytes": (
-                BUNDLE_PATH.stat().st_size
-            ),
-            "sha256": sha256_file(
-                BUNDLE_PATH
-            ),
+            "size_bytes": BUNDLE_PATH.stat().st_size,
+            "sha256": sha256_file(BUNDLE_PATH),
         },
-        "index": {
-            "file_count": len(
-                index_files
-            ),
-            "total_uncompressed_bytes": sum(
-                file_path.stat().st_size
-                for file_path in index_files
+        "release": {
+            "file_count": len(release_files),
+            "total_uncompressed_bytes": (
+                total_uncompressed_bytes
             ),
             "files": file_records,
         },
         "source_manifests": {
+            "catalogue_clean": (
+                catalogue_clean_manifest
+            ),
             "embedding": embedding_manifest,
             "keyword": keyword_manifest,
         },
@@ -270,17 +251,13 @@ def write_release_manifest(
 
 
 def verify_bundle_members(
-    index_files: tuple[Path, ...],
+    release_files: tuple[Path, ...],
 ) -> None:
-    """Confirm that the archive contains the expected files."""
+    """Confirm that the archive contains exactly the expected files."""
 
     expected_members = {
-        (
-            Path("data")
-            / "index"
-            / file_path.name
-        ).as_posix()
-        for file_path in index_files
+        file_path.as_posix()
+        for file_path in release_files
     }
 
     try:
@@ -299,19 +276,17 @@ def verify_bundle_members(
         tarfile.TarError,
     ) as error:
         raise RuntimeError(
-            "The generated index bundle could not "
+            "The generated release bundle could not "
             "be reopened."
         ) from error
 
     if actual_members != expected_members:
         missing_members = sorted(
-            expected_members
-            - actual_members
+            expected_members - actual_members
         )
 
         unexpected_members = sorted(
-            actual_members
-            - expected_members
+            actual_members - expected_members
         )
 
         raise RuntimeError(
@@ -321,27 +296,23 @@ def verify_bundle_members(
         )
 
 
-def format_megabytes(
-    size_bytes: int,
-) -> str:
+def format_megabytes(size_bytes: int) -> str:
     """Convert bytes to a readable megabyte value."""
 
-    return (
-        f"{size_bytes / 1024 / 1024:.2f} MB"
-    )
+    return f"{size_bytes / 1024 / 1024:.2f} MB"
 
 
 def main() -> None:
-    """Package the generated search index."""
+    """Package the files required by the hosted search app."""
 
     print(
-        "Validating generated search-index files..."
+        "Validating search-index release files..."
     )
 
-    index_files = validate_index_files()
+    release_files = validate_release_files()
 
     print(
-        f"Index files found: {len(index_files):,}"
+        f"Release files found: {len(release_files):,}"
     )
 
     print(
@@ -349,29 +320,43 @@ def main() -> None:
     )
 
     create_bundle(
-        index_files
+        release_files
     )
 
     verify_bundle_members(
-        index_files
+        release_files
     )
 
     manifest = create_release_manifest(
-        index_files
+        release_files
     )
 
     write_release_manifest(
         manifest
     )
 
-    bundle_size = (
-        BUNDLE_PATH.stat().st_size
-    )
+    bundle_size = BUNDLE_PATH.stat().st_size
 
     uncompressed_size = sum(
         file_path.stat().st_size
-        for file_path in index_files
+        for file_path in release_files
     )
+
+    bundle_information = manifest.get("bundle")
+
+    if not isinstance(bundle_information, dict):
+        raise RuntimeError(
+            "Generated manifest has no valid bundle section."
+        )
+
+    bundle_checksum = bundle_information.get(
+        "sha256"
+    )
+
+    if not isinstance(bundle_checksum, str):
+        raise RuntimeError(
+            "Generated manifest has no valid bundle checksum."
+        )
 
     print()
     print(
@@ -379,11 +364,11 @@ def main() -> None:
     )
 
     print(
-        f"Files packaged: {len(index_files):,}"
+        f"Files packaged: {len(release_files):,}"
     )
 
     print(
-        "Uncompressed index size: "
+        "Uncompressed release size: "
         f"{format_megabytes(uncompressed_size)}"
     )
 
@@ -401,8 +386,7 @@ def main() -> None:
     )
 
     print(
-        "Bundle SHA-256: "
-        f"{manifest['bundle']['sha256']}"
+        f"Bundle SHA-256: {bundle_checksum}"
     )
 
 

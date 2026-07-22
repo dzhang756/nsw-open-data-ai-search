@@ -38,7 +38,7 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Cache Hugging Face model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.HF_HOME }}
           key: >-
@@ -144,7 +144,7 @@ jobs:
               manifest = json.load(input_file)
 
           bundle = manifest["bundle"]
-          index = manifest["index"]
+          release = manifest["release"]
 
           size_mb = (
               bundle["size_bytes"]
@@ -162,7 +162,7 @@ jobs:
           Automatically generated search index for the NSW Open Data AI Search application.
 
           - Generated: {manifest["generated_at_utc"]}
-          - Index files: {index["file_count"]}
+          - Release files: {release["file_count"]}
           - Compressed bundle size: {size_mb:.2f} MB
           - Bundle SHA-256: `{bundle["sha256"]}`
           - Source commit: `{os.environ["GITHUB_SHA"]}`
