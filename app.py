@@ -25,11 +25,22 @@ from src.search_engine import (
     SearchResult,
 )
 from src.search_filters import SearchFilters
-from src.series_grouping import SearchResultGroup, group_search_results
+from src.series_grouping import (
+    SearchResultGroup,
+    group_search_results,
+)
 
 
 APP_TITLE = "NSW Open Data AI Search"
 RESULTS_PER_PAGE = 10
+
+SORT_BY_RELEVANCE = "Relevance"
+SORT_BY_LAST_MODIFIED = "Last Modified"
+
+SEARCH_SORT_OPTIONS = (
+    SORT_BY_RELEVANCE,
+    SORT_BY_LAST_MODIFIED,
+)
 
 # Query searches retrieve up to 1,000 candidates internally.
 # Result-level relevance filtering removes weak matches and retains
@@ -41,7 +52,10 @@ MAX_RESULTS = 1_000
 # 1,000 keyword candidates before ranking fusion.
 SEARCH_CANDIDATE_POOL = 1_000
 
-SYDNEY_TIME_ZONE = ZoneInfo("Australia/Sydney")
+SYDNEY_TIME_ZONE = ZoneInfo(
+    "Australia/Sydney"
+)
+
 ResultResponse = SearchResponse | BrowseResponse
 
 
@@ -149,7 +163,8 @@ st.markdown(
         font-weight: 600;
     }
 
-    section[data-testid="stSidebar"] div[data-testid="stWidgetLabel"] p {
+    section[data-testid="stSidebar"]
+    div[data-testid="stWidgetLabel"] p {
         font-size: 0.98rem;
     }
 
@@ -178,10 +193,17 @@ st.markdown(
     }
 
     .page-indicator {
-        text-align: center;
+        text-align: right;
         font-size: 1rem;
         font-weight: 600;
         padding-top: 0.5rem;
+    }
+
+    .sort-heading {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #172033;
+        margin-bottom: 0.3rem;
     }
 
     .dataset-link-spacing {
@@ -236,6 +258,10 @@ st.markdown(
         .app-subtitle {
             font-size: 1.08rem;
         }
+
+        .page-indicator {
+            text-align: left;
+        }
     }
     </style>
     """,
@@ -250,18 +276,23 @@ st.markdown(
 @st.cache_resource
 def load_search_resources(
     index_version: str,
-) -> tuple[SearchEngine, FilterOptionSummary]:
+) -> tuple[
+    SearchEngine,
+    FilterOptionSummary,
+]:
     """Load one specific search-index version."""
 
-    # The release checksum is deliberately part of the Streamlit cache
-    # key. SearchEngine reads the installed files from their standard
-    # data paths.
+    # The release checksum is deliberately part of the Streamlit
+    # cache key. SearchEngine reads the installed files from their
+    # standard data paths.
     del index_version
 
     engine = SearchEngine()
+
     filter_summary = build_filter_option_summary(
         engine.metadata_by_id.values()
     )
+
     return engine, filter_summary
 
 
@@ -269,17 +300,26 @@ def load_search_resources(
 # Display helpers
 # ------------------------------------------------------------------
 
-def display_format_name(value: str) -> str:
+def display_format_name(
+    value: str,
+) -> str:
     """Replace UNSPECIFIED with a friendlier label."""
 
     if value.strip().upper() == "UNSPECIFIED":
         return "OTHER"
+
     return value
 
 
 def option_formatter(
-    options: tuple[FilterOption, ...],
-    value_formatter: Callable[[str], str] | None = None,
+    options: tuple[
+        FilterOption,
+        ...,
+    ],
+    value_formatter: (
+        Callable[[str], str]
+        | None
+    ) = None,
 ) -> Callable[[str], str]:
     """Build filter labels containing dataset counts."""
 
@@ -287,47 +327,97 @@ def option_formatter(
         option.value: option.dataset_count
         for option in options
     }
-    formatter = value_formatter or (lambda value: value)
 
-    def format_option(value: str) -> str:
-        count = counts.get(value, 0)
-        display_value = formatter(value)
-        return f"{display_value} ({count:,} datasets)"
+    formatter = (
+        value_formatter
+        or (
+            lambda value: value
+        )
+    )
+
+    def format_option(
+        value: str,
+    ) -> str:
+        count = counts.get(
+            value,
+            0,
+        )
+
+        display_value = formatter(
+            value
+        )
+
+        return (
+            f"{display_value} "
+            f"({count:,} datasets)"
+        )
 
     return format_option
 
 
-def shorten_text(value: str, maximum_length: int = 420) -> str:
+def shorten_text(
+    value: str,
+    maximum_length: int = 420,
+) -> str:
     """Create a compact description preview."""
 
-    compact_value = " ".join(value.split())
+    compact_value = " ".join(
+        value.split()
+    )
+
     if len(compact_value) <= maximum_length:
         return compact_value
 
-    shortened = compact_value[: maximum_length + 1]
-    final_space = shortened.rfind(" ")
+    shortened = compact_value[
+        : maximum_length + 1
+    ]
+
+    final_space = shortened.rfind(
+        " "
+    )
 
     if final_space >= maximum_length * 0.75:
-        shortened = shortened[:final_space]
+        shortened = shortened[
+            :final_space
+        ]
     else:
-        shortened = shortened[:maximum_length]
+        shortened = shortened[
+            :maximum_length
+        ]
 
-    return shortened.rstrip(" ,.;:-") + "…"
+    return (
+        shortened.rstrip(
+            " ,.;:-"
+        )
+        + "…"
+    )
 
 
-def format_australian_date(value: date) -> str:
+def format_australian_date(
+    value: date,
+) -> str:
     """Display a numeric date using Australian ordering."""
 
-    return value.strftime("%d/%m/%Y")
+    return value.strftime(
+        "%d/%m/%Y"
+    )
 
 
-def format_long_date(value: date) -> str:
+def format_long_date(
+    value: date,
+) -> str:
     """Display a result date using day-first ordering."""
 
-    return f"{value.day} {value.strftime('%B')}, {value.year}"
+    return (
+        f"{value.day} "
+        f"{value.strftime('%B')}, "
+        f"{value.year}"
+    )
 
 
-def parse_catalogue_datetime(value: str) -> date | None:
+def parse_catalogue_datetime(
+    value: str,
+) -> date | None:
     """
     Convert a catalogue timestamp to a Sydney date.
 
@@ -336,93 +426,211 @@ def parse_catalogue_datetime(value: str) -> date | None:
     """
 
     compact_value = value.strip()
+
     if not compact_value:
         return None
 
-    if len(compact_value) == 10 and "T" not in compact_value:
+    if (
+        len(compact_value) == 10
+        and "T" not in compact_value
+    ):
         try:
-            return date.fromisoformat(compact_value)
+            return date.fromisoformat(
+                compact_value
+            )
         except ValueError:
             return None
 
     try:
         parsed_datetime = datetime.fromisoformat(
-            compact_value.replace("Z", "+00:00")
+            compact_value.replace(
+                "Z",
+                "+00:00",
+            )
         )
+
         if parsed_datetime.tzinfo is None:
-            parsed_datetime = parsed_datetime.replace(
-                tzinfo=timezone.utc
+            parsed_datetime = (
+                parsed_datetime.replace(
+                    tzinfo=timezone.utc
+                )
             )
 
-        local_datetime = parsed_datetime.astimezone(
-            SYDNEY_TIME_ZONE
+        local_datetime = (
+            parsed_datetime.astimezone(
+                SYDNEY_TIME_ZONE
+            )
         )
+
         return local_datetime.date()
+
     except ValueError:
         pass
 
     try:
-        return date.fromisoformat(compact_value[:10])
+        return date.fromisoformat(
+            compact_value[:10]
+        )
     except ValueError:
         return None
 
 
-def display_modified_date(value: str) -> str:
+def display_modified_date(
+    value: str,
+) -> str:
     """Return a written Sydney modification date."""
 
-    parsed_date = parse_catalogue_datetime(value)
+    parsed_date = parse_catalogue_datetime(
+        value
+    )
+
     if parsed_date is None:
         return "Unknown"
-    return format_long_date(parsed_date)
+
+    return format_long_date(
+        parsed_date
+    )
 
 
-def result_format_values(result: SearchResult) -> tuple[str, ...]:
+def sort_result_groups(
+    result_groups: tuple[
+        SearchResultGroup,
+        ...,
+    ],
+    sort_order: str,
+) -> tuple[
+    SearchResultGroup,
+    ...,
+]:
+    """Sort result groups using the selected display order."""
+
+    if sort_order == SORT_BY_RELEVANCE:
+        return result_groups
+
+    if sort_order == SORT_BY_LAST_MODIFIED:
+
+        def modification_date_key(
+            group: SearchResultGroup,
+        ) -> tuple[
+            int,
+            date,
+        ]:
+            modified_date = (
+                parse_catalogue_datetime(
+                    group
+                    .best_member
+                    .result
+                    .metadata_modified
+                )
+            )
+
+            if modified_date is None:
+                return (
+                    0,
+                    date.min,
+                )
+
+            return (
+                1,
+                modified_date,
+            )
+
+        return tuple(
+            sorted(
+                result_groups,
+                key=modification_date_key,
+                reverse=True,
+            )
+        )
+
+    raise ValueError(
+        "Unsupported result sort order: "
+        f"{sort_order}"
+    )
+
+
+def result_format_values(
+    result: SearchResult,
+) -> tuple[
+    str,
+    ...,
+]:
     """Return friendly display formats without duplicates."""
 
     values: list[str] = []
     seen_values: set[str] = set()
 
     for resource_format in result.resource_formats:
-        display_value = display_format_name(resource_format)
-        normalised_value = display_value.casefold()
+        display_value = display_format_name(
+            resource_format
+        )
+
+        normalised_value = (
+            display_value.casefold()
+        )
 
         if normalised_value in seen_values:
             continue
 
-        seen_values.add(normalised_value)
-        values.append(display_value)
+        seen_values.add(
+            normalised_value
+        )
 
-    return tuple(values)
+        values.append(
+            display_value
+        )
 
-
-def result_format_text(result: SearchResult) -> str:
-    """Return result formats for display."""
-
-    formats = result_format_values(result)
-    if not formats:
-        return "No formats specified"
-    return ", ".join(formats)
-
-
-def render_result_metadata(result: SearchResult) -> None:
-    """Display result metadata on separate lines."""
-
-    st.markdown(
-        f"**Organisation:** {result.organisation}  \n"
-        f"**Modified:** "
-        f"{display_modified_date(result.metadata_modified)}  \n"
-        f"**Formats:** {result_format_text(result)}"
+    return tuple(
+        values
     )
 
 
-def render_dataset_link(label: str, url: str) -> None:
+def result_format_text(
+    result: SearchResult,
+) -> str:
+    """Return result formats for display."""
+
+    formats = result_format_values(
+        result
+    )
+
+    if not formats:
+        return "No formats specified"
+
+    return ", ".join(
+        formats
+    )
+
+
+def render_result_metadata(
+    result: SearchResult,
+) -> None:
+    """Display result metadata on separate lines."""
+
+    st.markdown(
+        f"**Organisation:** "
+        f"{result.organisation}  \n"
+        f"**Modified:** "
+        f"{display_modified_date(result.metadata_modified)}  \n"
+        f"**Formats:** "
+        f"{result_format_text(result)}"
+    )
+
+
+def render_dataset_link(
+    label: str,
+    url: str,
+) -> None:
     """Render a dataset link with spacing above it."""
 
     st.markdown(
         '<div class="dataset-link-spacing"></div>',
         unsafe_allow_html=True,
     )
-    st.markdown(f"[{label}]({url})")
+
+    st.markdown(
+        f"[{label}]({url})"
+    )
 
 
 # ------------------------------------------------------------------
@@ -437,35 +645,84 @@ def clear_previous_results() -> None:
         "last_result_groups",
         "last_result_mode",
     ):
-        st.session_state.pop(key, None)
+        st.session_state.pop(
+            key,
+            None,
+        )
 
 
 def request_result_scroll() -> None:
     """Request scrolling after the next results render."""
 
-    st.session_state["scroll_to_results"] = True
+    st.session_state[
+        "scroll_to_results"
+    ] = True
+
     current_request_id = int(
-        st.session_state.get("scroll_request_id", 0)
-    )
-    st.session_state["scroll_request_id"] = (
-        current_request_id + 1
+        st.session_state.get(
+            "scroll_request_id",
+            0,
+        )
     )
 
-def clear_filters(earliest_date: date, latest_date: date) -> None:
+    st.session_state[
+        "scroll_request_id"
+    ] = current_request_id + 1
+
+
+def clear_filters(
+    earliest_date: date,
+    latest_date: date,
+) -> None:
     """Reset filters and previous results."""
 
-    st.session_state["selected_formats"] = []
-    st.session_state["selected_organisations"] = []
-    st.session_state["selected_categories"] = []
-    st.session_state["machine_readable_only"] = False
-    st.session_state["date_filter_enabled"] = False
-    st.session_state["modified_date_range"] = (
+    st.session_state[
+        "selected_formats"
+    ] = []
+
+    st.session_state[
+        "selected_organisations"
+    ] = []
+
+    st.session_state[
+        "selected_categories"
+    ] = []
+
+    st.session_state[
+        "machine_readable_only"
+    ] = False
+
+    st.session_state[
+        "date_filter_enabled"
+    ] = False
+
+    st.session_state[
+        "modified_date_range"
+    ] = (
         earliest_date,
         latest_date,
     )
-    st.session_state["result_page"] = 1
-    st.session_state["scroll_to_results"] = False
-    st.session_state["scroll_request_id"] = 0
+
+    st.session_state[
+        "result_page"
+    ] = 1
+
+    st.session_state[
+        "scroll_to_results"
+    ] = False
+
+    st.session_state[
+        "scroll_request_id"
+    ] = 0
+
+    st.session_state[
+        "result_sort_order"
+    ] = SORT_BY_RELEVANCE
+
+    st.session_state[
+        "browse_result_sort_order"
+    ] = SORT_BY_LAST_MODIFIED
+
     clear_previous_results()
 
 
@@ -476,13 +733,37 @@ def change_result_page(
     """Move backwards or forwards through result pages."""
 
     current_page = int(
-        st.session_state.get("result_page", 1)
+        st.session_state.get(
+            "result_page",
+            1,
+        )
     )
-    st.session_state["result_page"] = min(
+
+    st.session_state[
+        "result_page"
+    ] = min(
         maximum_page,
-        max(1, current_page + adjustment),
+        max(
+            1,
+            current_page + adjustment,
+        ),
     )
+
     request_result_scroll()
+
+
+def change_result_sort() -> None:
+    """Return to page one after changing the result order."""
+
+    st.session_state[
+        "result_page"
+    ] = 1
+
+    if st.session_state.get(
+        "last_result_groups"
+    ):
+        request_result_scroll()
+
 
 def normalise_filter_session_state(
     filter_summary: FilterOptionSummary,
@@ -493,23 +774,26 @@ def normalise_filter_session_state(
     Remove stale filter selections after a catalogue refresh.
 
     A date-range widget temporarily contains one date while the user
-    is selecting a new range. That intermediate state must be
-    preserved so the second date can be selected.
+    is selecting a new range. That intermediate state is preserved
+    so the second date can be selected.
     """
 
     valid_formats = {
         option.value
-        for option in filter_summary.formats
+        for option
+        in filter_summary.formats
     }
 
     valid_organisations = {
         option.value
-        for option in filter_summary.organisations
+        for option
+        in filter_summary.organisations
     }
 
     valid_categories = {
         option.value
-        for option in filter_summary.categories
+        for option
+        in filter_summary.categories
     }
 
     selection_rules = (
@@ -528,57 +812,86 @@ def normalise_filter_session_state(
     )
 
     for state_key, valid_values in selection_rules:
-        existing_values = st.session_state.get(
-            state_key
+        existing_values = (
+            st.session_state.get(
+                state_key
+            )
         )
 
-        if isinstance(existing_values, list):
-            st.session_state[state_key] = [
+        if isinstance(
+            existing_values,
+            list,
+        ):
+            st.session_state[
+                state_key
+            ] = [
                 value
-                for value in existing_values
+                for value
+                in existing_values
                 if value in valid_values
             ]
 
-    existing_range = st.session_state.get(
-        "modified_date_range"
+    existing_range = (
+        st.session_state.get(
+            "modified_date_range"
+        )
     )
 
     if existing_range is None:
-        st.session_state["modified_date_range"] = (
+        st.session_state[
+            "modified_date_range"
+        ] = (
             earliest_date,
             latest_date,
         )
+
         return
 
-    if isinstance(existing_range, date):
+    if isinstance(
+        existing_range,
+        date,
+    ):
         selected_dates = (
             existing_range,
         )
 
-    elif isinstance(existing_range, (tuple, list)):
+    elif isinstance(
+        existing_range,
+        (tuple, list),
+    ):
         selected_dates = tuple(
             existing_range
         )
 
     else:
-        st.session_state["modified_date_range"] = (
+        st.session_state[
+            "modified_date_range"
+        ] = (
             earliest_date,
             latest_date,
         )
+
         return
 
     if (
         not selected_dates
         or len(selected_dates) > 2
         or any(
-            not isinstance(selected_date, date)
-            for selected_date in selected_dates
+            not isinstance(
+                selected_date,
+                date,
+            )
+            for selected_date
+            in selected_dates
         )
     ):
-        st.session_state["modified_date_range"] = (
+        st.session_state[
+            "modified_date_range"
+        ] = (
             earliest_date,
             latest_date,
         )
+
         return
 
     # Streamlit temporarily stores one date after the user selects
@@ -587,13 +900,20 @@ def normalise_filter_session_state(
     if len(selected_dates) == 1:
         selected_date = selected_dates[0]
 
-        if earliest_date <= selected_date <= latest_date:
+        if (
+            earliest_date
+            <= selected_date
+            <= latest_date
+        ):
             return
 
-        st.session_state["modified_date_range"] = (
+        st.session_state[
+            "modified_date_range"
+        ] = (
             earliest_date,
             latest_date,
         )
+
         return
 
     start_date = max(
@@ -607,19 +927,26 @@ def normalise_filter_session_state(
     )
 
     if start_date > end_date:
-        st.session_state["modified_date_range"] = (
+        st.session_state[
+            "modified_date_range"
+        ] = (
             earliest_date,
             latest_date,
         )
+
         return
 
-    st.session_state["modified_date_range"] = (
+    st.session_state[
+        "modified_date_range"
+    ] = (
         start_date,
         end_date,
     )
 
 
-def scroll_to_first_result(scroll_request_id: int) -> None:
+def scroll_to_first_result(
+    scroll_request_id: int,
+) -> None:
     """
     Scroll directly to the first result card.
 
@@ -643,9 +970,15 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
                 while (currentElement) {{
                     const computedStyle =
                         parentWindow.getComputedStyle(currentElement);
-                    const overflowY = computedStyle.overflowY;
+
+                    const overflowY =
+                        computedStyle.overflowY;
+
                     const isScrollable =
-                        (overflowY === "auto" || overflowY === "scroll")
+                        (
+                            overflowY === "auto"
+                            || overflowY === "scroll"
+                        )
                         && (
                             currentElement.scrollHeight
                             > currentElement.clientHeight
@@ -655,7 +988,8 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
                         return currentElement;
                     }}
 
-                    currentElement = currentElement.parentElement;
+                    currentElement =
+                        currentElement.parentElement;
                 }}
 
                 return parentWindow;
@@ -664,15 +998,17 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
             function performScroll() {{
                 attempts += 1;
 
-                const target = parentDocument.getElementById(
-                    "first-result-card-anchor"
-                );
+                const target =
+                    parentDocument.getElementById(
+                        "first-result-card-anchor"
+                    );
 
                 if (!target) {{
                     return false;
                 }}
 
-                const scrollContainer = findScrollableParent(target);
+                const scrollContainer =
+                    findScrollableParent(target);
 
                 if (scrollContainer === parentWindow) {{
                     const targetPosition =
@@ -688,8 +1024,10 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
                 }} else {{
                     const targetRectangle =
                         target.getBoundingClientRect();
+
                     const containerRectangle =
                         scrollContainer.getBoundingClientRect();
+
                     const targetPosition =
                         scrollContainer.scrollTop
                         + targetRectangle.top
@@ -719,7 +1057,11 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
             const retryTimer = setInterval(
                 function () {{
                     const completed = performScroll();
-                    if (completed || attempts >= maximumAttempts) {{
+
+                    if (
+                        completed
+                        || attempts >= maximumAttempts
+                    ) {{
                         clearInterval(retryTimer);
                     }}
                 }},
@@ -737,39 +1079,75 @@ def scroll_to_first_result(scroll_request_id: int) -> None:
 # Result-card rendering
 # ------------------------------------------------------------------
 
-def render_standalone_result(result: SearchResult) -> None:
+def render_standalone_result(
+    result: SearchResult,
+) -> None:
     """Render one standalone dataset card."""
 
-    with st.container(border=True):
-        st.markdown(f"### {result.title}")
-        render_result_metadata(result)
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            f"### {result.title}"
+        )
+
+        render_result_metadata(
+            result
+        )
 
         if result.description:
-            st.write(shorten_text(result.description))
+            st.write(
+                shorten_text(
+                    result.description
+                )
+            )
 
         if result.dataset_url:
             render_dataset_link(
-                label="Open Data.NSW dataset",
+                label=(
+                    "Open Data.NSW dataset"
+                ),
                 url=result.dataset_url,
             )
 
 
-def render_series_group(group: SearchResultGroup) -> None:
+def render_series_group(
+    group: SearchResultGroup,
+) -> None:
     """Render one collapsed dataset series."""
 
-    top_result = group.best_member.result
+    top_result = (
+        group.best_member.result
+    )
 
-    with st.container(border=True):
-        st.markdown(f"### {group.display_title}")
-        st.caption(
-            f"Dataset series · "
-            f"{len(group.members):,} related datasets"
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            f"### {group.display_title}"
         )
-        st.markdown(f"**Top match:** {top_result.title}")
-        render_result_metadata(top_result)
+
+        st.caption(
+            "Dataset series · "
+            f"{len(group.members):,} "
+            "related datasets"
+        )
+
+        st.markdown(
+            f"**Top match:** "
+            f"{top_result.title}"
+        )
+
+        render_result_metadata(
+            top_result
+        )
 
         if top_result.description:
-            st.write(shorten_text(top_result.description))
+            st.write(
+                shorten_text(
+                    top_result.description
+                )
+            )
 
         if top_result.dataset_url:
             render_dataset_link(
@@ -778,21 +1156,41 @@ def render_series_group(group: SearchResultGroup) -> None:
             )
 
         with st.expander(
-            f"View all {len(group.members):,} related datasets",
+            (
+                f"View all "
+                f"{len(group.members):,} "
+                "related datasets"
+            ),
             expanded=False,
         ):
-            for member_index, member in enumerate(group.members):
+            for (
+                member_index,
+                member,
+            ) in enumerate(
+                group.members
+            ):
                 result = member.result
-                st.markdown(f"**{result.title}**")
-                render_result_metadata(result)
+
+                st.markdown(
+                    f"**{result.title}**"
+                )
+
+                render_result_metadata(
+                    result
+                )
 
                 if result.dataset_url:
                     render_dataset_link(
-                        label="Open Data.NSW dataset",
+                        label=(
+                            "Open Data.NSW dataset"
+                        ),
                         url=result.dataset_url,
                     )
 
-                if member_index < len(group.members) - 1:
+                if (
+                    member_index
+                    < len(group.members) - 1
+                ):
                     st.divider()
 
 
@@ -802,7 +1200,10 @@ def render_series_group(group: SearchResultGroup) -> None:
 
 def active_filter_lines(
     response: ResultResponse,
-) -> tuple[str, ...]:
+) -> tuple[
+    str,
+    ...,
+]:
     """Return each applied filter as a separate display line."""
 
     filters = response.filters
@@ -812,21 +1213,28 @@ def active_filter_lines(
         lines.append(
             "Formats: "
             + ", ".join(
-                display_format_name(value)
-                for value in filters.formats
+                display_format_name(
+                    value
+                )
+                for value
+                in filters.formats
             )
         )
 
     if filters.organisations:
         lines.append(
             "Organisations: "
-            + ", ".join(filters.organisations)
+            + ", ".join(
+                filters.organisations
+            )
         )
 
     if filters.categories:
         lines.append(
             "Categories: "
-            + ", ".join(filters.categories)
+            + ", ".join(
+                filters.categories
+            )
         )
 
     if (
@@ -835,31 +1243,50 @@ def active_filter_lines(
     ):
         lines.append(
             "Modified from "
-            + format_australian_date(filters.modified_from)
+            + format_australian_date(
+                filters.modified_from
+            )
             + " to "
-            + format_australian_date(filters.modified_to)
+            + format_australian_date(
+                filters.modified_to
+            )
         )
+
     elif filters.modified_from is not None:
         lines.append(
             "Modified from "
-            + format_australian_date(filters.modified_from)
+            + format_australian_date(
+                filters.modified_from
+            )
         )
+
     elif filters.modified_to is not None:
         lines.append(
             "Modified up to "
-            + format_australian_date(filters.modified_to)
+            + format_australian_date(
+                filters.modified_to
+            )
         )
 
     if filters.machine_readable_only:
-        lines.append("Machine-readable resources only")
+        lines.append(
+            "Machine-readable resources only"
+        )
 
-    return tuple(lines)
+    return tuple(
+        lines
+    )
 
 
-def render_active_filters(response: ResultResponse) -> None:
+def render_active_filters(
+    response: ResultResponse,
+) -> None:
     """Display applied filters on separate lines."""
 
-    filter_lines = active_filter_lines(response)
+    filter_lines = active_filter_lines(
+        response
+    )
+
     if not filter_lines:
         return
 
@@ -884,7 +1311,10 @@ def build_filters(
     organisations: list[str],
     categories: list[str],
     date_filter_enabled: bool,
-    modified_date_range: tuple[date, date],
+    modified_date_range: tuple[
+        date,
+        date,
+    ],
     machine_readable_only: bool,
 ) -> SearchFilters:
     """Create and validate structured filters."""
@@ -893,16 +1323,29 @@ def build_filters(
     modified_to: date | None = None
 
     if date_filter_enabled:
-        modified_from = modified_date_range[0]
-        modified_to = modified_date_range[1]
+        modified_from = (
+            modified_date_range[0]
+        )
+
+        modified_to = (
+            modified_date_range[1]
+        )
 
     return SearchFilters(
-        formats=tuple(formats),
-        organisations=tuple(organisations),
-        categories=tuple(categories),
+        formats=tuple(
+            formats
+        ),
+        organisations=tuple(
+            organisations
+        ),
+        categories=tuple(
+            categories
+        ),
         modified_from=modified_from,
         modified_to=modified_to,
-        machine_readable_only=machine_readable_only,
+        machine_readable_only=(
+            machine_readable_only
+        ),
     ).validated()
 
 
@@ -913,7 +1356,10 @@ def run_result_request(
 ) -> tuple[
     str,
     ResultResponse,
-    tuple[SearchResultGroup, ...],
+    tuple[
+        SearchResultGroup,
+        ...,
+    ],
 ]:
     """
     Run query search or filter-only catalogue browsing.
@@ -929,7 +1375,9 @@ def run_result_request(
     if query:
         config = SearchConfig(
             top_k=MAX_RESULTS,
-            candidate_pool=SEARCH_CANDIDATE_POOL,
+            candidate_pool=(
+                SEARCH_CANDIDATE_POOL
+            ),
             diversity_lambda=1.0,
             diversity_pool=MAX_RESULTS,
         ).validated()
@@ -939,32 +1387,56 @@ def run_result_request(
             config=config,
             filters=filters,
         )
+
         mode = "search"
 
-        query_relevance = assess_query_relevance(
-            query=query,
-            results=response.results,
+        query_relevance = (
+            assess_query_relevance(
+                query=query,
+                results=response.results,
+            )
         )
 
         if not query_relevance.is_relevant:
-            return mode, response, ()
+            return (
+                mode,
+                response,
+                (),
+            )
 
-        result_relevance = filter_relevant_results(
-            response.results
+        result_relevance = (
+            filter_relevant_results(
+                response.results
+            )
         )
+
         groups = group_search_results(
             result_relevance.results
         )
-        return mode, response, groups
+
+        return (
+            mode,
+            response,
+            groups,
+        )
 
     response = browse_catalogue(
         engine=engine,
         filters=filters,
         limit=MAX_RESULTS,
     )
+
     mode = "browse"
-    groups = group_search_results(response.results)
-    return mode, response, groups
+
+    groups = group_search_results(
+        response.results
+    )
+
+    return (
+        mode,
+        response,
+        groups,
+    )
 
 
 # ------------------------------------------------------------------
@@ -972,7 +1444,11 @@ def run_result_request(
 # ------------------------------------------------------------------
 
 st.markdown(
-    f'<div class="app-title">{APP_TITLE}</div>',
+    (
+        f'<div class="app-title">'
+        f"{APP_TITLE}"
+        "</div>"
+    ),
     unsafe_allow_html=True,
 )
 
@@ -998,43 +1474,80 @@ try:
     ):
         index_status = ensure_search_index()
 
-        previous_index_version = st.session_state.get(
-            "active_index_version"
+        previous_index_version = (
+            st.session_state.get(
+                "active_index_version"
+            )
         )
+
         index_changed = (
             previous_index_version is not None
-            and previous_index_version != index_status.version
+            and previous_index_version
+            != index_status.version
         )
 
-        if index_status.updated or index_changed:
+        if (
+            index_status.updated
+            or index_changed
+        ):
             load_search_resources.clear()
             clear_previous_results()
-            st.session_state["result_page"] = 1
 
-        st.session_state["active_index_version"] = (
+            st.session_state[
+                "result_page"
+            ] = 1
+
+        st.session_state[
+            "active_index_version"
+        ] = index_status.version
+
+        (
+            engine,
+            filter_summary,
+        ) = load_search_resources(
             index_status.version
         )
 
-        engine, filter_summary = load_search_resources(
-            index_status.version
-        )
+except (
+    FileNotFoundError,
+    RuntimeError,
+    ValueError,
+) as error:
+    st.error(
+        "The search indexes could not be loaded."
+    )
 
-except (FileNotFoundError, RuntimeError, ValueError) as error:
-    st.error("The search indexes could not be loaded.")
-    st.exception(error)
+    st.exception(
+        error
+    )
+
     st.stop()
 
 if index_status.warning:
-    st.warning(index_status.warning)
-
-
-earliest_date = filter_summary.earliest_modified_date
-latest_date = filter_summary.latest_modified_date
-
-if earliest_date is None or latest_date is None:
-    st.error(
-        "The catalogue contains no usable modification-date range."
+    st.warning(
+        index_status.warning
     )
+
+
+earliest_date = (
+    filter_summary
+    .earliest_modified_date
+)
+
+latest_date = (
+    filter_summary
+    .latest_modified_date
+)
+
+if (
+    earliest_date is None
+    or latest_date is None
+):
+    st.error(
+        "The catalogue contains no usable "
+        "modification-date range."
+    )
+
     st.stop()
 
 normalise_filter_session_state(
@@ -1043,8 +1556,14 @@ normalise_filter_session_state(
     latest_date=latest_date,
 )
 
-today_in_sydney = datetime.now(SYDNEY_TIME_ZONE).date()
-date_picker_maximum = max(latest_date, today_in_sydney)
+today_in_sydney = datetime.now(
+    SYDNEY_TIME_ZONE
+).date()
+
+date_picker_maximum = max(
+    latest_date,
+    today_in_sydney,
+)
 
 
 # ------------------------------------------------------------------
@@ -1052,16 +1571,22 @@ date_picker_maximum = max(latest_date, today_in_sydney)
 # ------------------------------------------------------------------
 
 with st.sidebar:
-    st.header("Search filters")
+    st.header(
+        "Search filters"
+    )
+
     st.caption(
-        "Use any combination of filters to narrow the available "
-        "datasets."
+        "Use any combination of filters to narrow "
+        "the available datasets."
     )
 
     st.button(
         "Clear filters",
         on_click=clear_filters,
-        args=(earliest_date, latest_date),
+        args=(
+            earliest_date,
+            latest_date,
+        ),
         use_container_width=True,
     )
 
@@ -1070,11 +1595,15 @@ with st.sidebar:
     selected_formats = st.multiselect(
         "Resource formats",
         options=[
-            option.value for option in filter_summary.formats
+            option.value
+            for option
+            in filter_summary.formats
         ],
         format_func=option_formatter(
             filter_summary.formats,
-            value_formatter=display_format_name,
+            value_formatter=(
+                display_format_name
+            ),
         ),
         placeholder="Select formats",
         key="selected_formats",
@@ -1084,7 +1613,8 @@ with st.sidebar:
         "Organisations",
         options=[
             option.value
-            for option in filter_summary.organisations
+            for option
+            in filter_summary.organisations
         ],
         format_func=option_formatter(
             filter_summary.organisations
@@ -1097,7 +1627,8 @@ with st.sidebar:
         "Data.NSW categories",
         options=[
             option.value
-            for option in filter_summary.categories
+            for option
+            in filter_summary.categories
         ],
         format_func=option_formatter(
             filter_summary.categories
@@ -1105,8 +1636,8 @@ with st.sidebar:
         placeholder="Select categories",
         key="selected_categories",
         help=(
-            "Category coverage is limited. Leave this blank for "
-            "broader results."
+            "Category coverage is limited. "
+            "Leave this blank for broader results."
         ),
     )
 
@@ -1116,12 +1647,18 @@ with st.sidebar:
     )
 
     date_filter_enabled = bool(
-        st.session_state.get("date_filter_enabled", False)
+        st.session_state.get(
+            "date_filter_enabled",
+            False,
+        )
     )
 
     modified_date_range = st.date_input(
         "Modification date range",
-        value=(earliest_date, latest_date),
+        value=(
+            earliest_date,
+            latest_date,
+        ),
         min_value=earliest_date,
         max_value=date_picker_maximum,
         format="DD/MM/YYYY",
@@ -1162,8 +1699,14 @@ with st.form(
     clear_on_submit=False,
     enter_to_submit=True,
 ):
-    search_column, button_column = st.columns(
-        [5.5, 1.25],
+    (
+        search_column,
+        button_column,
+    ) = st.columns(
+        [
+            5.5,
+            1.25,
+        ],
         vertical_alignment="bottom",
     )
 
@@ -1171,20 +1714,26 @@ with st.form(
         query = st.text_input(
             "Search query",
             placeholder=(
-                "For example: road crash data for Western Sydney"
+                "For example: road crash data "
+                "for Western Sydney"
             ),
             key="search_query",
             label_visibility="collapsed",
         )
 
     with button_column:
-        main_submitted = st.form_submit_button(
-            "Find datasets",
-            type="primary",
-            use_container_width=True,
+        main_submitted = (
+            st.form_submit_button(
+                "Find datasets",
+                type="primary",
+                use_container_width=True,
+            )
         )
 
-submitted = main_submitted or sidebar_submitted
+submitted = (
+    main_submitted
+    or sidebar_submitted
+)
 
 st.caption(
     "Leave the search box blank to browse the latest datasets "
@@ -1199,23 +1748,33 @@ results_placeholder = st.empty()
 # ------------------------------------------------------------------
 
 if submitted:
-    cleaned_query = " ".join(query.split())
+    cleaned_query = " ".join(
+        query.split()
+    )
 
     valid_date_range = (
-        isinstance(modified_date_range, (tuple, list))
+        isinstance(
+            modified_date_range,
+            (tuple, list),
+        )
         and len(modified_date_range) == 2
     )
 
-    if date_filter_enabled and not valid_date_range:
+    if (
+        date_filter_enabled
+        and not valid_date_range
+    ):
         results_placeholder.error(
             "Select both a start date and an end date."
         )
+
     else:
         if valid_date_range:
             selected_date_range = (
                 modified_date_range[0],
                 modified_date_range[1],
             )
+
         else:
             selected_date_range = (
                 earliest_date,
@@ -1223,8 +1782,25 @@ if submitted:
             )
 
         clear_previous_results()
-        st.session_state["result_page"] = 1
-        st.session_state["scroll_to_results"] = False
+
+        st.session_state[
+            "result_page"
+        ] = 1
+
+        st.session_state[
+            "scroll_to_results"
+        ] = False
+
+        if cleaned_query:
+            st.session_state[
+                "result_sort_order"
+            ] = SORT_BY_RELEVANCE
+
+        else:
+            st.session_state[
+                "browse_result_sort_order"
+            ] = SORT_BY_LAST_MODIFIED
+
         results_placeholder.empty()
 
         try:
@@ -1238,19 +1814,29 @@ if submitted:
 
                 with st.spinner(
                     (
-                        "Searching for the best matching datasets..."
+                        "Searching for the best "
+                        "matching datasets..."
                         if cleaned_query
-                        else "Loading matching datasets..."
+                        else
+                        "Loading matching datasets..."
                     ),
                     show_time=True,
                     width="stretch",
                 ):
                     filters = build_filters(
                         formats=selected_formats,
-                        organisations=selected_organisations,
-                        categories=selected_categories,
-                        date_filter_enabled=date_filter_enabled,
-                        modified_date_range=selected_date_range,
+                        organisations=(
+                            selected_organisations
+                        ),
+                        categories=(
+                            selected_categories
+                        ),
+                        date_filter_enabled=(
+                            date_filter_enabled
+                        ),
+                        modified_date_range=(
+                            selected_date_range
+                        ),
                         machine_readable_only=(
                             machine_readable_only
                         ),
@@ -1266,48 +1852,74 @@ if submitted:
                         filters=filters,
                     )
 
-                    st.session_state["last_result_mode"] = (
-                        result_mode
-                    )
-                    st.session_state["last_result_response"] = (
-                        response
-                    )
-                    st.session_state["last_result_groups"] = (
-                        result_groups
-                    )
+                    st.session_state[
+                        "last_result_mode"
+                    ] = result_mode
+
+                    st.session_state[
+                        "last_result_response"
+                    ] = response
+
+                    st.session_state[
+                        "last_result_groups"
+                    ] = result_groups
 
                     if sidebar_submitted:
                         request_result_scroll()
 
             results_placeholder.empty()
 
-        except (RuntimeError, ValueError) as error:
+        except (
+            RuntimeError,
+            ValueError,
+        ) as error:
             results_placeholder.empty()
+
             with results_placeholder.container():
-                st.error("The request could not be completed.")
-                st.exception(error)
+                st.error(
+                    "The request could not be completed."
+                )
+
+                st.exception(
+                    error
+                )
 
 
 # ------------------------------------------------------------------
 # Display stored results
 # ------------------------------------------------------------------
 
-result_mode = st.session_state.get("last_result_mode")
-response = st.session_state.get("last_result_response")
-result_groups = st.session_state.get("last_result_groups")
+result_mode = st.session_state.get(
+    "last_result_mode"
+)
 
-if response is None or result_groups is None:
+response = st.session_state.get(
+    "last_result_response"
+)
+
+result_groups = st.session_state.get(
+    "last_result_groups"
+)
+
+if (
+    response is None
+    or result_groups is None
+):
     if not submitted:
         with results_placeholder.container():
             st.info(
-                "Enter a search, choose filters, or leave the "
-                "search box blank to browse recently updated "
-                "datasets."
+                "Enter a search, choose filters, or leave "
+                "the search box blank to browse recently "
+                "updated datasets."
             )
+
 else:
     with results_placeholder.container():
         should_scroll = bool(
-            st.session_state.pop("scroll_to_results", False)
+            st.session_state.pop(
+                "scroll_to_results",
+                False,
+            )
         )
 
         st.divider()
@@ -1315,72 +1927,190 @@ else:
         if not result_groups:
             if result_mode == "search":
                 st.warning(
-                    "No relevant datasets were found. Try different "
-                    "search terms or remove one or more filters."
+                    "No relevant datasets were found. "
+                    "Try different search terms or remove "
+                    "one or more filters."
                 )
+
             else:
                 st.warning(
-                    "No datasets matched the selected filters. Try "
-                    "removing one or more filters."
+                    "No datasets matched the selected filters. "
+                    "Try removing one or more filters."
                 )
+
         else:
-            total_results = len(result_groups)
+            total_results = len(
+                result_groups
+            )
+
             total_pages = max(
                 1,
-                ceil(total_results / RESULTS_PER_PAGE),
+                ceil(
+                    total_results
+                    / RESULTS_PER_PAGE
+                ),
             )
 
             current_page = int(
-                st.session_state.get("result_page", 1)
+                st.session_state.get(
+                    "result_page",
+                    1,
+                )
             )
+
             current_page = min(
                 total_pages,
-                max(1, current_page),
+                max(
+                    1,
+                    current_page,
+                ),
             )
-            st.session_state["result_page"] = current_page
 
-            start_index = (
-                current_page - 1
-            ) * RESULTS_PER_PAGE
-            end_index = min(
-                start_index + RESULTS_PER_PAGE,
-                total_results,
+            st.session_state[
+                "result_page"
+            ] = current_page
+
+            # Sort control on its own line above the heading and
+            # page indicator. The right column keeps the dropdown
+            # compact rather than stretching across the page.
+            (
+                sort_spacer_column,
+                sort_column,
+            ) = st.columns(
+                [
+                    5.4,
+                    1.1,
+                ],
+                vertical_alignment="bottom",
             )
-            visible_groups = result_groups[
-                start_index:end_index
-            ]
 
-            heading_column, page_column = st.columns([4, 1])
-
-            with heading_column:
-                if result_mode == "search":
-                    st.subheader(
-                        f"Results for “{response.query}”"
-                    )
-                elif response.filters.is_active:
-                    st.subheader(
-                        "Datasets matching your filters"
-                    )
-                else:
-                    st.subheader("Recently updated datasets")
-
-            with page_column:
+            with sort_column:
                 st.markdown(
-                    '<div class="page-indicator">'
-                    f"Page {current_page} of {total_pages}"
+                    '<div class="sort-heading">'
+                    "Sort by"
                     "</div>",
                     unsafe_allow_html=True,
                 )
 
+                if result_mode == "search":
+                    selected_sort_order = (
+                        st.selectbox(
+                            "Sort by",
+                            options=(
+                                SEARCH_SORT_OPTIONS
+                            ),
+                            index=0,
+                            key=(
+                                "result_sort_order"
+                            ),
+                            on_change=(
+                                change_result_sort
+                            ),
+                            label_visibility=(
+                                "collapsed"
+                            ),
+                        )
+                    )
+
+                else:
+                    selected_sort_order = (
+                        st.selectbox(
+                            "Sort by",
+                            options=(
+                                SORT_BY_LAST_MODIFIED,
+                            ),
+                            index=0,
+                            key=(
+                                "browse_result_sort_order"
+                            ),
+                            disabled=True,
+                            help=(
+                                "Catalogue browsing is "
+                                "already ordered by the "
+                                "most recent modification "
+                                "date."
+                            ),
+                            label_visibility=(
+                                "collapsed"
+                            ),
+                        )
+                    )
+
+            sorted_result_groups = (
+                sort_result_groups(
+                    result_groups=result_groups,
+                    sort_order=(
+                        selected_sort_order
+                    ),
+                )
+            )
+
+            (
+                heading_column,
+                page_column,
+            ) = st.columns(
+                [
+                    4.8,
+                    1.2,
+                ],
+                vertical_alignment="bottom",
+            )
+
+            with heading_column:
+                if result_mode == "search":
+                    st.subheader(
+                        f"Results for "
+                        f"“{response.query}”"
+                    )
+
+                elif response.filters.is_active:
+                    st.subheader(
+                        "Datasets matching your filters"
+                    )
+
+                else:
+                    st.subheader(
+                        "Recently updated datasets"
+                    )
+
+            with page_column:
+                st.markdown(
+                    '<div class="page-indicator">'
+                    f"Page {current_page} "
+                    f"of {total_pages}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+            start_index = (
+                current_page - 1
+            ) * RESULTS_PER_PAGE
+
+            end_index = min(
+                start_index
+                + RESULTS_PER_PAGE,
+                total_results,
+            )
+
+            visible_groups = (
+                sorted_result_groups[
+                    start_index:end_index
+                ]
+            )
+
             st.markdown(
                 '<div class="result-range">'
-                f"Showing {start_index + 1:,}–{end_index:,} "
+                f"Showing "
+                f"{start_index + 1:,}–"
+                f"{end_index:,} "
                 f"of {total_results:,} results"
                 "</div>",
                 unsafe_allow_html=True,
             )
 
-            render_active_filters(response)
+            render_active_filters(
+                response
+            )
 
             if result_mode == "browse":
                 st.caption(
@@ -1395,7 +2125,10 @@ else:
 
             for group in visible_groups:
                 if group.is_series:
-                    render_series_group(group)
+                    render_series_group(
+                        group
+                    )
+
                 else:
                     render_standalone_result(
                         group.best_member.result
@@ -1406,22 +2139,39 @@ else:
                     previous_column,
                     middle_column,
                     next_column,
-                ) = st.columns([1, 2, 1])
+                ) = st.columns(
+                    [
+                        1,
+                        2,
+                        1,
+                    ]
+                )
 
                 with previous_column:
                     st.button(
                         "← Previous",
-                        key="previous_result_page",
-                        disabled=current_page <= 1,
-                        on_click=change_result_page,
-                        args=(-1, total_pages),
+                        key=(
+                            "previous_result_page"
+                        ),
+                        disabled=(
+                            current_page <= 1
+                        ),
+                        on_click=(
+                            change_result_page
+                        ),
+                        args=(
+                            -1,
+                            total_pages,
+                        ),
                         use_container_width=True,
                     )
 
                 with middle_column:
                     st.markdown(
-                        '<div class="page-indicator">'
-                        f"Page {current_page} of {total_pages}"
+                        '<div class="page-indicator" '
+                        'style="text-align: center;">'
+                        f"Page {current_page} "
+                        f"of {total_pages}"
                         "</div>",
                         unsafe_allow_html=True,
                     )
@@ -1429,10 +2179,20 @@ else:
                 with next_column:
                     st.button(
                         "Next →",
-                        key="next_result_page",
-                        disabled=current_page >= total_pages,
-                        on_click=change_result_page,
-                        args=(1, total_pages),
+                        key=(
+                            "next_result_page"
+                        ),
+                        disabled=(
+                            current_page
+                            >= total_pages
+                        ),
+                        on_click=(
+                            change_result_page
+                        ),
+                        args=(
+                            1,
+                            total_pages,
+                        ),
                         use_container_width=True,
                     )
 
