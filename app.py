@@ -67,7 +67,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="assets/search-icon-dark.png",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
     menu_items={
         "Get help": None,
         "Report a Bug": None,
@@ -108,14 +108,6 @@ st.markdown(
     }
 
     [data-testid="stStatusWidget"] {
-        display: none !important;
-    }
-
-    [data-testid="stSidebarCollapseButton"] {
-        display: none !important;
-    }
-
-    [data-testid="collapsedControl"] {
         display: none !important;
     }
 
@@ -245,8 +237,27 @@ st.markdown(
         padding-top: 0;
     }
 
+    /*
+    Keep the existing desktop appearance by hiding Streamlit's
+    sidebar controls only on wider screens.
+    */
+    @media (min-width: 901px) {
+        [data-testid="stSidebarCollapseButton"] {
+            display: none !important;
+        }
+
+        [data-testid="collapsedControl"] {
+            display: none !important;
+        }
+    }
+
+    /*
+    On mobile, the sidebar starts closed and can be opened using
+    Streamlit's standard sidebar button.
+    */
     @media (max-width: 900px) {
         .block-container {
+            padding-top: 2rem;
             padding-left: 1.25rem;
             padding-right: 1.25rem;
         }
@@ -257,10 +268,23 @@ st.markdown(
 
         .app-subtitle {
             font-size: 1.08rem;
+            margin-bottom: 1.7rem;
         }
 
         .page-indicator {
             text-align: left;
+        }
+
+        section[data-testid="stSidebar"] {
+            width: 90vw !important;
+            min-width: 0 !important;
+            max-width: 370px !important;
+        }
+
+        section[data-testid="stSidebar"] > div {
+            width: 90vw !important;
+            min-width: 0 !important;
+            max-width: 370px !important;
         }
     }
     </style>
