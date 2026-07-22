@@ -17,6 +17,12 @@ from src.filter_options import (
     FilterOptionSummary,
     build_filter_option_summary,
 )
+from src.query_relevance import (
+    assess_query_relevance,
+)
+from src.result_relevance import (
+    filter_relevant_results,
+)
 from src.search_engine import (
     SearchConfig,
     SearchEngine,
@@ -29,16 +35,20 @@ from src.series_grouping import (
     group_search_results,
 )
 
+
 APP_TITLE = "NSW Open Data AI Search"
 
 RESULTS_PER_PAGE = 10
 
-# Query-only, filtered and query-plus-filter requests can
-# return up to 1,000 datasets before series grouping.
+# Query searches retrieve up to 1,000 candidates internally.
+# Result-level relevance filtering removes weak matches and
+# retains no more than 200 qualifying query results.
+#
+# Filter-only browsing can return up to 1,000 datasets.
 MAX_RESULTS = 1_000
 
 # Hybrid searches consider up to 1,000 semantic candidates
-# and up to 1,000 keyword candidates before fusion.
+# and up to 1,000 keyword candidates before ranking fusion.
 SEARCH_CANDIDATE_POOL = 1_000
 
 SYDNEY_TIME_ZONE = ZoneInfo(
@@ -54,7 +64,7 @@ ResultResponse = SearchResponse | BrowseResponse
 
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon="🔎",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
@@ -84,9 +94,6 @@ st.markdown(
             width: 370px !important;
         }
 
-        /*
-        Hide Streamlit toolbar and menu controls.
-        */
         #MainMenu {
             display: none !important;
         }
@@ -103,9 +110,6 @@ st.markdown(
             display: none !important;
         }
 
-        /*
-        Keep the filter sidebar permanently expanded.
-        */
         [data-testid="stSidebarCollapseButton"] {
             display: none !important;
         }
@@ -143,6 +147,14 @@ st.markdown(
         div[data-testid="stTextInput"] input {
             min-height: 3.4rem;
             font-size: 1.1rem;
+        }
+
+        /*
+        Hide Streamlit's "Press Enter to submit form"
+        instruction while retaining Enter-to-search.
+        */
+        div[data-testid="InputInstructions"] {
+            display: none !important;
         }
 
         div[data-testid="stWidgetLabel"] p {
@@ -201,10 +213,21 @@ st.markdown(
             color: #354052;
         }
 
-        /*
-        Provide a precise scroll landing point immediately
-        above the first result card.
-        */
+        .applied-filters-heading {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #354052;
+            margin-top: 0.6rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .applied-filter-line {
+            font-size: 0.91rem;
+            color: #596579;
+            line-height: 1.45;
+            margin-bottom: 0.2rem;
+        }
+
         #first-result-card-anchor {
             height: 1px;
             scroll-margin-top: 20px;
@@ -246,7 +269,7 @@ def load_search_resources() -> tuple[
 def display_format_name(
     value: str,
 ) -> str:
-    """Replace UNSPECIFIED with a friendlier display label."""
+    """Replace UNSPECIFIED with a friendlier label."""
 
     if value.strip().upper() == "UNSPECIFIED":
         return "OTHER"
@@ -256,11 +279,7 @@ def display_format_name(
 
 def option_formatter(
     options: tuple[FilterOption, ...],
-    value_formatter: Callable[
-        [str],
-        str,
-    ]
-    | None = None,
+    value_formatter: Callable[[str], str] | None = None,
 ) -> Callable[[str], str]:
     """Build filter labels containing dataset counts."""
 
@@ -325,21 +344,21 @@ def shorten_text(
 def format_australian_date(
     value: date,
 ) -> str:
-    """Display a numeric date in Australian order."""
+    """Display a numeric date using Australian ordering."""
 
     return value.strftime(
-        "%d-%m-%Y"
+        "%d/%m/%Y"
     )
 
 
 def format_long_date(
     value: date,
 ) -> str:
-    """Display a result date with a written month."""
+    """Display a result date using day-first ordering."""
 
     return (
-        f"{value.strftime('%B')} "
-        f"{value.day}, "
+        f"{value.day} "
+        f"{value.strftime('%B')}, "
         f"{value.year}"
     )
 
@@ -520,6 +539,25 @@ def clear_previous_results() -> None:
         )
 
 
+def request_result_scroll() -> None:
+    """Request scrolling after the next results render."""
+
+    st.session_state[
+        "scroll_to_results"
+    ] = True
+
+    current_request_id = int(
+        st.session_state.get(
+            "scroll_request_id",
+            0,
+        )
+    )
+
+    st.session_state[
+        "scroll_request_id"
+    ] = current_request_id + 1
+
+
 def clear_filters(
     earliest_date: date,
     latest_date: date,
@@ -561,6 +599,10 @@ def clear_filters(
         "scroll_to_results"
     ] = False
 
+    st.session_state[
+        "scroll_request_id"
+    ] = 0
+
     clear_previous_results()
 
 
@@ -587,124 +629,140 @@ def change_result_page(
         ),
     )
 
-    # The flag is read after the next page has rendered.
-    st.session_state[
-        "scroll_to_results"
-    ] = True
+    request_result_scroll()
 
 
-def scroll_to_first_result() -> None:
+def scroll_to_first_result(
+    scroll_request_id: int,
+) -> None:
     """
     Scroll directly to the first result card.
 
-    Streamlit rerenders the page after a pagination button is
-    selected. The JavaScript retries until the new result-card
-    anchor is available, then scrolls to it.
+    The changing request ID forces the JavaScript component
+    to execute after every page or filter request.
     """
 
     components.html(
-        """
+        f"""
         <script>
-            (function () {
+            (function () {{
+                const scrollRequestId = {scroll_request_id};
+
                 const parentWindow = window.parent;
                 const parentDocument = parentWindow.document;
 
                 let attempts = 0;
-                const maximumAttempts = 40;
+                const maximumAttempts = 60;
 
-                function findTarget() {
-                    return parentDocument.getElementById(
-                        "first-result-card-anchor"
-                    );
-                }
+                function findScrollableParent(element) {{
+                    let currentElement =
+                        element.parentElement;
 
-                function performScroll() {
+                    while (currentElement) {{
+                        const computedStyle =
+                            parentWindow.getComputedStyle(
+                                currentElement
+                            );
+
+                        const overflowY =
+                            computedStyle.overflowY;
+
+                        const isScrollable =
+                            (
+                                overflowY === "auto"
+                                || overflowY === "scroll"
+                            )
+                            && (
+                                currentElement.scrollHeight
+                                > currentElement.clientHeight
+                            );
+
+                        if (isScrollable) {{
+                            return currentElement;
+                        }}
+
+                        currentElement =
+                            currentElement.parentElement;
+                    }}
+
+                    return parentWindow;
+                }}
+
+                function performScroll() {{
                     attempts += 1;
 
-                    const target = findTarget();
-
-                    if (!target) {
-                        return false;
-                    }
-
-                    const mainContainer =
-                        parentDocument.querySelector(
-                            '[data-testid="stAppViewContainer"]'
+                    const target =
+                        parentDocument.getElementById(
+                            "first-result-card-anchor"
                         );
+
+                    if (!target) {{
+                        return false;
+                    }}
 
                     const scrollContainer =
-                        parentDocument.querySelector(
-                            '[data-testid="stMain"]'
-                        );
+                        findScrollableParent(target);
 
-                    const targetTop =
-                        target.getBoundingClientRect().top;
-
-                    /*
-                    Streamlit versions may scroll either the
-                    browser window or an internal main element.
-                    Try the internal element first, then scroll
-                    the parent window as a fallback.
-                    */
-                    if (
-                        scrollContainer
-                        && scrollContainer.scrollHeight
-                        > scrollContainer.clientHeight
-                    ) {
-                        const containerTop =
-                            scrollContainer
-                                .getBoundingClientRect()
-                                .top;
-
-                        const desiredPosition =
-                            scrollContainer.scrollTop
-                            + targetTop
-                            - containerTop
+                    if (scrollContainer === parentWindow) {{
+                        const targetPosition =
+                            target.getBoundingClientRect().top
+                            + parentWindow.scrollY
                             - 20;
 
-                        scrollContainer.scrollTo({
-                            top: desiredPosition,
-                            behavior: "smooth"
-                        });
-                    }
+                        parentWindow.scrollTo({{
+                            top: targetPosition,
+                            left: 0,
+                            behavior: "auto"
+                        }});
+                    }} else {{
+                        const targetRectangle =
+                            target.getBoundingClientRect();
 
-                    const windowPosition =
-                        targetTop
-                        + parentWindow.scrollY
-                        - 20;
+                        const containerRectangle =
+                            scrollContainer
+                                .getBoundingClientRect();
 
-                    parentWindow.scrollTo({
-                        top: windowPosition,
-                        behavior: "smooth"
-                    });
+                        const targetPosition =
+                            scrollContainer.scrollTop
+                            + targetRectangle.top
+                            - containerRectangle.top
+                            - 20;
 
-                    target.scrollIntoView({
-                        behavior: "smooth",
+                        scrollContainer.scrollTo({{
+                            top: targetPosition,
+                            left: 0,
+                            behavior: "auto"
+                        }});
+                    }}
+
+                    target.scrollIntoView({{
+                        behavior: "auto",
                         block: "start",
                         inline: "nearest"
-                    });
+                    }});
 
                     return true;
-                }
+                }}
 
-                if (performScroll()) {
+                if (performScroll()) {{
                     return;
-                }
+                }}
 
                 const retryTimer = setInterval(
-                    function () {
-                        const completed = performScroll();
+                    function () {{
+                        const completed =
+                            performScroll();
 
                         if (
                             completed
                             || attempts >= maximumAttempts
-                        ) {
+                        ) {{
                             clearInterval(retryTimer);
-                        }
-                    },
-                    100
+                        }}
+                    }},
+                    50
                 );
-            })();
+            }})();
         </script>
         """,
         height=0,
@@ -823,16 +881,16 @@ def render_series_group(
 # Filter and search helpers
 # ------------------------------------------------------------------
 
-def active_filter_text(
+def active_filter_lines(
     response: ResultResponse,
-) -> str:
-    """Create a concise summary of active filters."""
+) -> tuple[str, ...]:
+    """Return each applied filter as a separate display line."""
 
     filters = response.filters
-    active_filters: list[str] = []
+    lines: list[str] = []
 
     if filters.formats:
-        active_filters.append(
+        lines.append(
             "Formats: "
             + ", ".join(
                 display_format_name(value)
@@ -841,7 +899,7 @@ def active_filter_text(
         )
 
     if filters.organisations:
-        active_filters.append(
+        lines.append(
             "Organisations: "
             + ", ".join(
                 filters.organisations
@@ -849,37 +907,80 @@ def active_filter_text(
         )
 
     if filters.categories:
-        active_filters.append(
+        lines.append(
             "Categories: "
             + ", ".join(
                 filters.categories
             )
         )
 
-    if filters.modified_from is not None:
-        active_filters.append(
+    if (
+        filters.modified_from is not None
+        and filters.modified_to is not None
+    ):
+        lines.append(
+            "Modified from "
+            + format_australian_date(
+                filters.modified_from
+            )
+            + " to "
+            + format_australian_date(
+                filters.modified_to
+            )
+        )
+
+    elif filters.modified_from is not None:
+        lines.append(
             "Modified from "
             + format_australian_date(
                 filters.modified_from
             )
         )
 
-    if filters.modified_to is not None:
-        active_filters.append(
-            "Modified to "
+    elif filters.modified_to is not None:
+        lines.append(
+            "Modified up to "
             + format_australian_date(
                 filters.modified_to
             )
         )
 
     if filters.machine_readable_only:
-        active_filters.append(
-            "Machine-readable only"
+        lines.append(
+            "Machine-readable resources only"
         )
 
-    return " · ".join(
-        active_filters
+    return tuple(lines)
+
+
+def render_active_filters(
+    response: ResultResponse,
+) -> None:
+    """Display applied filters on separate lines."""
+
+    filter_lines = active_filter_lines(
+        response
     )
+
+    if not filter_lines:
+        return
+
+    st.markdown(
+        '<div class="applied-filters-heading">'
+        "Applied filters"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    for line in filter_lines:
+        st.markdown(
+            (
+                '<div class="applied-filter-line">'
+                f"{line}"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
 
 def build_filters(
@@ -931,15 +1032,18 @@ def run_result_request(
     tuple[SearchResultGroup, ...],
 ]:
     """
-    Run hybrid search or filter-only catalogue browsing.
+    Run query search or filter-only catalogue browsing.
 
-    Query-only and query-plus-filter searches consider the
-    top 1,000 semantic candidates and top 1,000 keyword
-    candidates. Their rankings are fused before the strongest
-    1,000 datasets are returned.
+    Query searches retrieve up to 1,000 hybrid candidates.
+    The query is checked for relevance before weak individual
+    results are removed using calibrated semantic and keyword
+    score floors.
 
-    Filter-only browsing returns the 1,000 most recently
-    modified eligible datasets.
+    No more than 200 qualifying query results are retained
+    before dataset-series grouping.
+
+    Filter-only browsing is not subject to query relevance
+    filtering and can return up to 1,000 datasets.
     """
 
     if query:
@@ -960,20 +1064,49 @@ def run_result_request(
 
         mode = "search"
 
-    else:
-        response = browse_catalogue(
-            engine=engine,
-            filters=filters,
-            limit=MAX_RESULTS,
+        query_relevance = assess_query_relevance(
+            query=query,
+            results=response.results,
         )
 
-        mode = "browse"
+        if not query_relevance.is_relevant:
+            return (
+                mode,
+                response,
+                (),
+            )
+
+        result_relevance = filter_relevant_results(
+            response.results
+        )
+
+        groups = group_search_results(
+            result_relevance.results
+        )
+
+        return (
+            mode,
+            response,
+            groups,
+        )
+
+    response = browse_catalogue(
+        engine=engine,
+        filters=filters,
+        limit=MAX_RESULTS,
+    )
+
+    mode = "browse"
 
     groups = group_search_results(
         response.results
     )
 
-    return mode, response, groups
+    return (
+        mode,
+        response,
+        groups,
+    )
 
 
 # ------------------------------------------------------------------
@@ -1047,8 +1180,6 @@ today_in_sydney = datetime.now(
     SYDNEY_TIME_ZONE
 ).date()
 
-# Allow users to select today's date even when the newest
-# catalogue record was modified several days earlier.
 date_picker_maximum = max(
     latest_date,
     today_in_sydney,
@@ -1131,9 +1262,6 @@ with st.sidebar:
         key="machine_readable_only",
     )
 
-    # Read the stored checkbox state before rendering the
-    # date picker. Streamlit reruns immediately when the
-    # checkbox is changed, enabling or disabling the picker.
     date_filter_enabled = bool(
         st.session_state.get(
             "date_filter_enabled",
@@ -1149,7 +1277,7 @@ with st.sidebar:
         ),
         min_value=earliest_date,
         max_value=date_picker_maximum,
-        format="DD-MM-YYYY",
+        format="DD/MM/YYYY",
         key="modified_date_range",
         disabled=(
             not date_filter_enabled
@@ -1159,6 +1287,15 @@ with st.sidebar:
     date_filter_enabled = st.checkbox(
         "Apply modification date range",
         key="date_filter_enabled",
+    )
+
+    st.divider()
+
+    sidebar_submitted = st.button(
+        "Apply filters",
+        type="primary",
+        key="sidebar_find_datasets",
+        use_container_width=True,
     )
 
 
@@ -1173,28 +1310,41 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-search_column, button_column = st.columns(
-    [5.5, 1.25],
-    vertical_alignment="bottom",
+# Placing the search input and button inside a form means
+# pressing Enter while typing submits the same search as
+# selecting the Find datasets button.
+with st.form(
+    key="dataset_search_form",
+    clear_on_submit=False,
+    enter_to_submit=True,
+):
+    search_column, button_column = st.columns(
+        [5.5, 1.25],
+        vertical_alignment="bottom",
+    )
+
+    with search_column:
+        query = st.text_input(
+            "Search query",
+            placeholder=(
+                "For example: road crash data "
+                "for Western Sydney"
+            ),
+            key="search_query",
+            label_visibility="collapsed",
+        )
+
+    with button_column:
+        main_submitted = st.form_submit_button(
+            "Find datasets",
+            type="primary",
+            use_container_width=True,
+        )
+
+submitted = (
+    main_submitted
+    or sidebar_submitted
 )
-
-with search_column:
-    query = st.text_input(
-        "Search query",
-        placeholder=(
-            "For example: road crash data "
-            "for Western Sydney"
-        ),
-        key="search_query",
-        label_visibility="collapsed",
-    )
-
-with button_column:
-    submitted = st.button(
-        "Find datasets",
-        type="primary",
-        use_container_width=True,
-    )
 
 st.caption(
     "Leave the search box blank to browse the latest "
@@ -1242,8 +1392,6 @@ if submitted:
                 latest_date,
             )
 
-        # Remove the old results before loading the next
-        # request so they are not displayed underneath.
         clear_previous_results()
 
         st.session_state[
@@ -1319,6 +1467,9 @@ if submitted:
                 "last_result_groups"
             ] = result_groups
 
+            if sidebar_submitted:
+                request_result_scroll()
+
             results_placeholder.empty()
 
         except (
@@ -1365,8 +1516,6 @@ if (
 
 else:
     with results_placeholder.container():
-        # Capture the scroll flag before rendering the new
-        # page, but delay the scroll until every card exists.
         should_scroll = bool(
             st.session_state.pop(
                 "scroll_to_results",
@@ -1377,10 +1526,19 @@ else:
         st.divider()
 
         if not result_groups:
-            st.warning(
-                "No datasets matched your search and "
-                "filters. Try removing one or more filters."
-            )
+            if result_mode == "search":
+                st.warning(
+                    "No relevant datasets were found. "
+                    "Try different search terms or remove "
+                    "one or more filters."
+                )
+
+            else:
+                st.warning(
+                    "No datasets matched the selected "
+                    "filters. Try removing one or more "
+                    "filters."
+                )
 
         else:
             total_results = len(
@@ -1470,14 +1628,9 @@ else:
                 unsafe_allow_html=True,
             )
 
-            applied_filters = active_filter_text(
+            render_active_filters(
                 response
             )
-
-            if applied_filters:
-                st.caption(
-                    applied_filters
-                )
 
             if result_mode == "browse":
                 st.caption(
@@ -1486,8 +1639,6 @@ else:
                     "modification date."
                 )
 
-            # The scroll target sits directly above the first
-            # card rather than above the results heading.
             st.markdown(
                 (
                     '<div id="first-result-card-anchor">'
@@ -1560,7 +1711,12 @@ else:
                         use_container_width=True,
                     )
 
-            # Run only after all cards and pagination controls
-            # have been rendered on the new page.
             if should_scroll:
-                scroll_to_first_result()
+                scroll_to_first_result(
+                    scroll_request_id=int(
+                        st.session_state.get(
+                            "scroll_request_id",
+                            0,
+                        )
+                    )
+                )

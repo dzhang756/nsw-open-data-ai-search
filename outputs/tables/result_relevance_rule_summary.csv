@@ -1,0 +1,37 @@
+query_type,query,rule,semantic_floor,keyword_floor,results_examined,results_retained,retention_percentage,last_retained_rank
+narrow,road crash data,strict,0.32424071431159973,0.10150110721588135,1000,530,53.0,789
+narrow,road crash data,balanced,0.28821396827697754,0.08120088577270508,1000,791,79.10000000000001,1000
+narrow,road crash data,permissive,0.25218722224235535,0.06090066432952881,1000,870,87.0,1000
+narrow,ambulance off stretcher times,strict,0.3,0.16037650406360626,1000,20,2.0,30
+narrow,ambulance off stretcher times,balanced,0.25,0.128301203250885,1000,50,5.0,59
+narrow,ambulance off stretcher times,permissive,0.2017761468887329,0.09622590243816376,1000,191,19.1,234
+narrow,koala habitat corridors,strict,0.3461940586566925,0.08,1000,185,18.5,227
+narrow,koala habitat corridors,balanced,0.3077280521392822,0.05954532623291016,1000,399,39.900000000000006,482
+narrow,koala habitat corridors,permissive,0.26926204562187195,0.044658994674682616,1000,869,86.9,988
+narrow,hospital waiting times,strict,0.3,0.09539591521024704,1000,44,4.3999999999999995,49
+narrow,hospital waiting times,balanced,0.25,0.07631673216819763,1000,258,25.8,304
+narrow,hospital waiting times,permissive,0.2,0.05723754912614822,1000,528,52.800000000000004,656
+narrow,water quality monitoring,strict,0.3014246106147766,0.08,1000,549,54.900000000000006,717
+narrow,water quality monitoring,balanced,0.2679329872131348,0.05854185223579407,1000,868,86.8,997
+narrow,water quality monitoring,permissive,0.23444136381149291,0.04390638917684555,1000,959,95.89999999999999,997
+broad,transport,strict,0.3,0.08,1000,782,78.2,996
+broad,transport,balanced,0.25,0.05796288251876831,1000,964,96.39999999999999,1000
+broad,transport,permissive,0.2,0.04347216188907623,1000,1000,100.0,1000
+broad,health,strict,0.3,0.08729639649391174,1000,200,20.0,522
+broad,health,balanced,0.25,0.0698371171951294,1000,276,27.6,542
+broad,health,permissive,0.2,0.05237783789634704,1000,545,54.50000000000001,649
+broad,environment,strict,0.3,0.08,1000,662,66.2,999
+broad,environment,balanced,0.25,0.05,1000,850,85.0,999
+broad,environment,permissive,0.2,0.030000000447034835,1000,961,96.1,1000
+broad,housing,strict,0.3,0.08,1000,292,29.2,367
+broad,housing,balanced,0.25,0.05,1000,752,75.2,999
+broad,housing,permissive,0.2,0.03,1000,913,91.3,1000
+natural_language,Sydney public transport passenger data,strict,0.319508707523346,0.08,1000,959,95.89999999999999,1000
+natural_language,Sydney public transport passenger data,balanced,0.28400774002075196,0.05055794715881348,1000,997,99.7,1000
+natural_language,Sydney public transport passenger data,permissive,0.24850677251815795,0.037918460369110105,1000,1000,100.0,1000
+natural_language,bushfire risk management plans,strict,0.3,0.08,1000,883,88.3,999
+natural_language,bushfire risk management plans,balanced,0.25,0.05423117280006409,1000,1000,100.0,1000
+natural_language,bushfire risk management plans,permissive,0.20442970395088195,0.04067337960004806,1000,1000,100.0,1000
+misspelled,emergncy departmnt wait times,strict,0.3,0.08,1000,7,0.7000000000000001,59
+misspelled,emergncy departmnt wait times,balanced,0.25,0.05,1000,11,1.0999999999999999,101
+misspelled,emergncy departmnt wait times,permissive,0.2,0.03,1000,35,3.5000000000000004,101
