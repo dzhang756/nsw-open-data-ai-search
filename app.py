@@ -451,7 +451,6 @@ def request_result_scroll() -> None:
         current_request_id + 1
     )
 
-
 def clear_filters(earliest_date: date, latest_date: date) -> None:
     """Reset filters and previous results."""
 
@@ -485,32 +484,54 @@ def change_result_page(
     )
     request_result_scroll()
 
-
 def normalise_filter_session_state(
     filter_summary: FilterOptionSummary,
     earliest_date: date,
     latest_date: date,
 ) -> None:
-    """Remove stale filter selections after a catalogue refresh."""
+    """
+    Remove stale filter selections after a catalogue refresh.
+
+    A date-range widget temporarily contains one date while the user
+    is selecting a new range. That intermediate state must be
+    preserved so the second date can be selected.
+    """
 
     valid_formats = {
-        option.value for option in filter_summary.formats
+        option.value
+        for option in filter_summary.formats
     }
+
     valid_organisations = {
-        option.value for option in filter_summary.organisations
+        option.value
+        for option in filter_summary.organisations
     }
+
     valid_categories = {
-        option.value for option in filter_summary.categories
+        option.value
+        for option in filter_summary.categories
     }
 
     selection_rules = (
-        ("selected_formats", valid_formats),
-        ("selected_organisations", valid_organisations),
-        ("selected_categories", valid_categories),
+        (
+            "selected_formats",
+            valid_formats,
+        ),
+        (
+            "selected_organisations",
+            valid_organisations,
+        ),
+        (
+            "selected_categories",
+            valid_categories,
+        ),
     )
 
     for state_key, valid_values in selection_rules:
-        existing_values = st.session_state.get(state_key)
+        existing_values = st.session_state.get(
+            state_key
+        )
+
         if isinstance(existing_values, list):
             st.session_state[state_key] = [
                 value
@@ -518,26 +539,79 @@ def normalise_filter_session_state(
                 if value in valid_values
             ]
 
-    existing_range = st.session_state.get("modified_date_range")
-    valid_range = (
-        isinstance(existing_range, (tuple, list))
-        and len(existing_range) == 2
-        and isinstance(existing_range[0], date)
-        and isinstance(existing_range[1], date)
+    existing_range = st.session_state.get(
+        "modified_date_range"
     )
 
-    if not valid_range:
+    if existing_range is None:
         st.session_state["modified_date_range"] = (
             earliest_date,
             latest_date,
         )
         return
 
-    start_date = max(earliest_date, existing_range[0])
-    end_date = min(latest_date, existing_range[1])
+    if isinstance(existing_range, date):
+        selected_dates = (
+            existing_range,
+        )
+
+    elif isinstance(existing_range, (tuple, list)):
+        selected_dates = tuple(
+            existing_range
+        )
+
+    else:
+        st.session_state["modified_date_range"] = (
+            earliest_date,
+            latest_date,
+        )
+        return
+
+    if (
+        not selected_dates
+        or len(selected_dates) > 2
+        or any(
+            not isinstance(selected_date, date)
+            for selected_date in selected_dates
+        )
+    ):
+        st.session_state["modified_date_range"] = (
+            earliest_date,
+            latest_date,
+        )
+        return
+
+    # Streamlit temporarily stores one date after the user selects
+    # the beginning of a new range. Preserve that state until the
+    # second date is selected.
+    if len(selected_dates) == 1:
+        selected_date = selected_dates[0]
+
+        if earliest_date <= selected_date <= latest_date:
+            return
+
+        st.session_state["modified_date_range"] = (
+            earliest_date,
+            latest_date,
+        )
+        return
+
+    start_date = max(
+        earliest_date,
+        selected_dates[0],
+    )
+
+    end_date = min(
+        latest_date,
+        selected_dates[1],
+    )
 
     if start_date > end_date:
-        start_date, end_date = earliest_date, latest_date
+        st.session_state["modified_date_range"] = (
+            earliest_date,
+            latest_date,
+        )
+        return
 
     st.session_state["modified_date_range"] = (
         start_date,
