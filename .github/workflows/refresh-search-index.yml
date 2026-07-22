@@ -1,0 +1,224 @@
+name: Refresh search index
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "30 4 * * *"
+      timezone: "Australia/Sydney"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-search-index
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  RELEASE_TAG: search-index-latest
+
+jobs:
+  refresh-search-index:
+    name: Rebuild and publish search index
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Cache Hugging Face model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: >-
+            huggingface-${{ runner.os }}-python-3.12-all-MiniLM-L6-v2-v1
+          restore-keys: |
+            huggingface-${{ runner.os }}-python-3.12-
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Fetch latest Data.NSW catalogue
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "Catalogue download attempt ${attempt} of 3..."
+
+            if python -m src.fetch_catalogue; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -eq 3 ]; then
+              echo "Catalogue download failed after three attempts."
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 30))
+            echo "Retrying in ${sleep_seconds} seconds..."
+            sleep "${sleep_seconds}"
+          done
+
+      - name: Clean catalogue
+        run: |
+          set -euo pipefail
+          python -m src.clean_catalogue
+
+      - name: Validate cleaned catalogue
+        run: |
+          set -euo pipefail
+          python -m src.validate_clean_catalogue
+
+      - name: Build search documents
+        run: |
+          set -euo pipefail
+          python -m src.build_search_documents
+
+      - name: Generate semantic embeddings
+        run: |
+          set -euo pipefail
+          python -m src.generate_embeddings
+
+      - name: Generate keyword index
+        run: |
+          set -euo pipefail
+          python -m src.generate_keyword_index
+
+      - name: Run automated tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -v
+
+      - name: Package search index
+        run: |
+          set -euo pipefail
+          python -m src.package_search_index
+
+      - name: Verify release files
+        run: |
+          set -euo pipefail
+
+          test -s dist/search-index.tar.gz
+          test -s dist/search-index-manifest.json
+
+          echo "Generated release files:"
+          ls -lh \
+            dist/search-index.tar.gz \
+            dist/search-index-manifest.json
+
+          echo
+          echo "Archive contents:"
+          tar -tzf dist/search-index.tar.gz
+
+      - name: Create release notes
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest_path = Path(
+              "dist/search-index-manifest.json"
+          )
+
+          with manifest_path.open(
+              "r",
+              encoding="utf-8",
+          ) as input_file:
+              manifest = json.load(input_file)
+
+          bundle = manifest["bundle"]
+          index = manifest["index"]
+
+          size_mb = (
+              bundle["size_bytes"]
+              / 1024
+              / 1024
+          )
+
+          run_url = (
+              f"{os.environ['GITHUB_SERVER_URL']}/"
+              f"{os.environ['GITHUB_REPOSITORY']}/"
+              f"actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          )
+
+          notes = f"""\
+          Automatically generated search index for the NSW Open Data AI Search application.
+
+          - Generated: {manifest["generated_at_utc"]}
+          - Index files: {index["file_count"]}
+          - Compressed bundle size: {size_mb:.2f} MB
+          - Bundle SHA-256: `{bundle["sha256"]}`
+          - Source commit: `{os.environ["GITHUB_SHA"]}`
+          - Workflow run: {run_url}
+
+          These assets are replaced by the automated daily refresh workflow.
+          """
+
+          Path("dist/release-notes.md").write_text(
+              notes,
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish search-index release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Updating existing release: ${RELEASE_TAG}"
+
+            gh release upload \
+              "${RELEASE_TAG}" \
+              dist/search-index.tar.gz \
+              dist/search-index-manifest.json \
+              --clobber
+
+            gh release edit \
+              "${RELEASE_TAG}" \
+              --title "Latest Search Index" \
+              --notes-file dist/release-notes.md
+          else
+            echo "Creating release: ${RELEASE_TAG}"
+
+            gh release create \
+              "${RELEASE_TAG}" \
+              dist/search-index.tar.gz \
+              dist/search-index-manifest.json \
+              --title "Latest Search Index" \
+              --notes-file dist/release-notes.md \
+              --target "${GITHUB_SHA}" \
+              --latest=false
+          fi
+
+      - name: Write workflow summary
+        run: |
+          {
+            echo "## Search index refresh completed"
+            echo
+            echo "- Catalogue fetched and validated"
+            echo "- Semantic embeddings regenerated"
+            echo "- Keyword indexes regenerated"
+            echo "- Automated tests passed"
+            echo "- Release assets published"
+            echo
+            echo "Release tag: \`${RELEASE_TAG}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
