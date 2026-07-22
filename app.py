@@ -64,7 +64,7 @@ ResultResponse = SearchResponse | BrowseResponse
 
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon="🔍",
+    page_icon="assets/search-icon-dark.png",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
