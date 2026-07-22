@@ -99,10 +99,6 @@ st.markdown(
         display: none !important;
     }
 
-    [data-testid="stToolbar"] {
-        display: none !important;
-    }
-
     [data-testid="stDecoration"] {
         display: none !important;
     }
@@ -238,10 +234,14 @@ st.markdown(
     }
 
     /*
-    Keep the existing desktop appearance by hiding Streamlit's
-    sidebar controls only on wider screens.
+    Keep Streamlit's toolbar and sidebar controls hidden on desktop,
+    preserving the existing desktop appearance.
     */
     @media (min-width: 901px) {
+        [data-testid="stToolbar"] {
+            display: none !important;
+        }
+
         [data-testid="stSidebarCollapseButton"] {
             display: none !important;
         }
@@ -249,15 +249,42 @@ st.markdown(
         [data-testid="collapsedControl"] {
             display: none !important;
         }
+
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
+        }
     }
 
     /*
-    On mobile, the sidebar starts closed and can be opened using
-    Streamlit's standard sidebar button.
+    On mobile, keep the Streamlit header and sidebar controls visible
+    so users can open and close the filter panel.
     */
     @media (max-width: 900px) {
+        header[data-testid="stHeader"] {
+            display: block !important;
+            visibility: visible !important;
+            height: 3.5rem !important;
+            min-height: 3.5rem !important;
+            background: transparent !important;
+        }
+
+        [data-testid="stToolbar"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+        }
+
         .block-container {
-            padding-top: 2rem;
+            padding-top: 3.75rem;
             padding-left: 1.25rem;
             padding-right: 1.25rem;
         }
